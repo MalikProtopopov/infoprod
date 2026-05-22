@@ -62,7 +62,7 @@ jobs:
           # Sentry выключаем в CI
           SENTRY_DSN: ''
       - name: Upload coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: ./backend/coverage.xml
           flags: backend
@@ -99,7 +99,7 @@ jobs:
         run: npm ci
       - working-directory: admin
         run: npm run test:cov
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v6
         with:
           files: ./admin/coverage/lcov.info
           flags: frontend
