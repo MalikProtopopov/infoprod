@@ -21,6 +21,7 @@ from app.api.bots import router as bots_router  # noqa: E402
 from app.api.channels import router as channels_router  # noqa: E402
 from app.api.leads import router as leads_router  # noqa: E402
 from app.api.middleware.request_id import RequestContextMiddleware  # noqa: E402
+from app.core.metrics import PrometheusMetricsMiddleware, metrics_response  # noqa: E402
 from app.api.payments import router as payments_router  # noqa: E402
 from app.api.products import router as products_router  # noqa: E402
 from app.api.stats import router as stats_router  # noqa: E402
@@ -61,6 +62,13 @@ app = FastAPI(title="Infobizbot API", version="1.0.0", lifespan=lifespan)
 
 # Middleware — request_id первым, чтобы все остальные слои уже несли его в контексте
 app.add_middleware(RequestContextMiddleware)
+# Prometheus идёт сразу после request_id, чтобы успел замерить latency финально
+app.add_middleware(PrometheusMetricsMiddleware)
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics_endpoint():
+    return metrics_response()
 
 if settings.cors_origins_list:
     app.add_middleware(

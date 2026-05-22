@@ -1,0 +1,89 @@
+# Observability stack для Infobizbot.
+# Подключается рядом с основным docker-compose.yml.
+# Запуск:
+#   docker compose -f docker-compose.yml -f observability/docker-compose.observability.yml up -d
+#
+# После старта:
+#   Grafana    → http://server:3001  (admin / admin при первом входе)
+#   Prometheus → http://server:9090
+#   Loki       → http://server:3100  (только API)
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    container_name: infobizbot-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=30d"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    networks:
+      - internal
+    expose:
+      - "9090"
+
+  loki:
+    image: grafana/loki:3.3.0
+    container_name: infobizbot-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    volumes:
+      - ./observability/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - loki_data:/loki
+    networks:
+      - internal
+    expose:
+      - "3100"
+
+  promtail:
+    image: grafana/promtail:3.3.0
+    container_name: infobizbot-promtail
+    restart: unless-stopped
+    volumes:
+      - ./observability/promtail-config.yaml:/etc/promtail/promtail.yaml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/log:/var/log:ro
+    command: -config.file=/etc/promtail/promtail.yaml
+    depends_on:
+      - loki
+    networks:
+      - internal
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: infobizbot-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+      - loki
+    networks:
+      - internal
+
+networks:
+  internal:
+    external: true
+    name: infobizbot_internal
+
+volumes:
+  prometheus_data:
+  loki_data:
+  grafana_data:
+
+# Запускается рядом с main docker-compose.yml — все наследуют одну дефолтную сеть.
+# Если запускаешь обычным `docker compose -f docker-compose.yml -f observability/...`
+# то network `default` уже общая.
