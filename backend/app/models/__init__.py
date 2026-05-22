@@ -1,0 +1,9 @@
+from app.models.admin import Admin  # noqa: F401
+from app.models.bot import Bot  # noqa: F401
+from app.models.channel import Channel  # noqa: F401
+from app.models.product import Product  # noqa: F401
+from app.models.tracking_link import TrackingLink  # noqa: F401
+from app.models.user import User  # noqa: F401
+from app.models.lead import Lead  # noqa: F401
+from app.models.payment import Payment  # noqa: F401
+from app.models.subscription import Subscription  # noqa: F401

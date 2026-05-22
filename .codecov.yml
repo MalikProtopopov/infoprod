@@ -1,0 +1,18 @@
+coverage:
+  status:
+    project:
+      backend:
+        target: auto
+        threshold: 1%
+        paths:
+          - backend/app/
+      frontend:
+        target: auto
+        threshold: 1%
+        paths:
+          - admin/
+    patch:
+      default:
+        target: 80%
+
+# В Phase 5 повышаем до 98% и убираем threshold

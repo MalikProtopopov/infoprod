@@ -1,0 +1,74 @@
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["alembic/versions/*", ".venv/*"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # bugbear
+    "C90", # mccabe complexity
+    "UP",  # pyupgrade
+    "ASYNC",
+    "S",   # bandit security
+    "DTZ", # datetime tz-aware
+    "RUF",
+    "SIM", # simplify
+]
+ignore = [
+    "B008",   # FastAPI Depends(...) в дефолтных значениях — норма
+    "S101",   # assert
+    "S104",   # bind 0.0.0.0 — в Docker контейнере норма
+    "S105",   # hardcoded passwords в тестах
+    "S106",
+    "S107",
+    "DTZ007", # datetime без tz — в текстах OK
+    "C901",   # mccabe
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S105", "S106", "DTZ005", "S311", "ASYNC230"]
+"alembic/**/*.py" = ["E501", "DTZ"]
+"scripts/**/*.py" = ["DTZ"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false   # начнём мягко, поднимем до true в Phase 5
+plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
+exclude = ["alembic/", "scripts/", "tests/"]
+
+[[tool.mypy.overrides]]
+module = ["aiogram.*", "factory.*", "freezegun.*", "testcontainers.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["app"]
+omit = [
+    "app/main.py",
+    "alembic/*",
+    "*/__init__.py",
+    "scripts/*",
+]
+branch = true
+parallel = true
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "@(abc\\.)?abstractmethod",
+]
+# В Phase 1 не блокируем низким coverage — план поднимает до 98% в Phase 5.
+fail_under = 0
+precision = 2
+show_missing = true
+
+[tool.coverage.html]
+directory = "htmlcov"

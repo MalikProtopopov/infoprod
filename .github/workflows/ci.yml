@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─────────────────────────────────────────────────────
+  backend-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+      - name: Install deps
+        working-directory: backend
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: ruff check
+        working-directory: backend
+        run: ruff check .
+      - name: ruff format check
+        working-directory: backend
+        run: ruff format --check .
+      - name: bandit
+        working-directory: backend
+        run: bandit -q -r app -lll
+        continue-on-error: true  # пока soft-fail
+      - name: pip-audit
+        working-directory: backend
+        run: pip-audit -r requirements.txt --strict
+        continue-on-error: true
+
+  # ─────────────────────────────────────────────────────
+  backend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+      - name: Install deps
+        working-directory: backend
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Run pytest
+        working-directory: backend
+        run: pytest -n 2 --cov-report=xml --cov-report=term
+        env:
+          # Sentry выключаем в CI
+          SENTRY_DSN: ''
+      - name: Upload coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./backend/coverage.xml
+          flags: backend
+        if: always()
+
+  # ─────────────────────────────────────────────────────
+  frontend-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: admin/package-lock.json
+      - working-directory: admin
+        run: npm ci
+      - working-directory: admin
+        run: npm run lint
+      - working-directory: admin
+        run: npm run type-check
+
+  # ─────────────────────────────────────────────────────
+  frontend-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: admin/package-lock.json
+      - working-directory: admin
+        run: npm ci
+      - working-directory: admin
+        run: npm run test:cov
+      - uses: codecov/codecov-action@v5
+        with:
+          files: ./admin/coverage/lcov.info
+          flags: frontend
+        if: always()
+
+  # ─────────────────────────────────────────────────────
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          severity: CRITICAL,HIGH
+          exit-code: 0  # пока soft-fail; в Phase 5 → 1
+          ignore-unfixed: true
