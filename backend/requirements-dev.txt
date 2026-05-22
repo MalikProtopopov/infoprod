@@ -15,7 +15,7 @@ freezegun==1.5.1
 hypothesis==6.122.3
 
 # Mutation
-mutmut==2.5.1
+mutmut==3.5.0
 
 # Lint / format
 ruff==0.8.4
