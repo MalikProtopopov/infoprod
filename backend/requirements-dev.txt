@@ -20,7 +20,7 @@ mutmut==2.5.1
 # Lint / format
 ruff==0.8.4
 mypy==1.13.0
-types-passlib==1.7.7
+types-passlib==1.7.7.20260211
 types-python-jose==3.3.4
 
 # Security
