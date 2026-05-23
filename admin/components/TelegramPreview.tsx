@@ -1,14 +1,16 @@
 'use client';
 
-import clsx from 'clsx';
 import { useMemo } from 'react';
 
 /**
  * Реалтайм-превью того, как сообщение выглядит в Telegram.
  *
- * - Рендерит безопасное подмножество HTML (b, i, u, s, code, a, br)
- * - Подставляет {first_name} / {username} — берётся из `previewName`
- * - Показывает блок-attachment если указан lead_magnet (имя + emoji-type)
+ * Рендерит безопасное подмножество Telegram HTML:
+ *   <b> <i> <u> <s> <code> <pre> <blockquote> <blockquote expandable>
+ *   <tg-spoiler> <a href="…"> <br>
+ *
+ * - Подставляет {first_name} / {username}
+ * - Показывает блок-attachment если указан lead_magnet
  * - Inline-кнопки рендерятся как в TG
  * - Внизу автоматическая «🔕 Не присылать напоминания» (бэкенд добавляет)
  */
@@ -51,7 +53,7 @@ export function TelegramPreview({
       <div className="space-y-2">
         <div className="bg-white rounded-2xl rounded-tl-md p-3 max-w-[88%] shadow-soft">
           <div
-            className="text-[13.5px] leading-snug text-ink whitespace-pre-wrap break-words"
+            className="tg-message text-[13.5px] leading-snug text-ink whitespace-pre-wrap break-words"
             dangerouslySetInnerHTML={{ __html: rendered }}
           />
         </div>
@@ -104,6 +106,69 @@ export function TelegramPreview({
       <div className="mt-3 text-[10.5px] text-zinc-500 text-center">
         Так это увидит пользователь. Имя подставлено из вашего профиля.
       </div>
+
+      <style jsx>{`
+        :global(.tg-message b),
+        :global(.tg-message strong) { font-weight: 700; }
+        :global(.tg-message i),
+        :global(.tg-message em) { font-style: italic; }
+        :global(.tg-message u) { text-decoration: underline; }
+        :global(.tg-message s) { text-decoration: line-through; }
+        :global(.tg-message code) {
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size: 0.92em;
+          background: #eef2ff;
+          color: #3730a3;
+          padding: 0 4px;
+          border-radius: 4px;
+        }
+        :global(.tg-message pre) {
+          font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+          font-size: 0.86em;
+          background: #f1f5f9;
+          color: #1e293b;
+          padding: 8px 10px;
+          border-radius: 8px;
+          overflow-x: auto;
+          margin: 6px 0;
+          white-space: pre;
+        }
+        :global(.tg-message blockquote) {
+          border-left: 3px solid #6366f1;
+          padding: 2px 0 2px 10px;
+          margin: 4px 0;
+          color: #3730a3;
+          background: linear-gradient(to right, rgba(99,102,241,0.06), transparent 60%);
+          border-radius: 0 6px 6px 0;
+        }
+        :global(.tg-message blockquote[data-expandable]) {
+          position: relative;
+        }
+        :global(.tg-message blockquote[data-expandable]::after) {
+          content: "▾ развернуть";
+          display: block;
+          margin-top: 2px;
+          font-size: 10.5px;
+          color: #6366f1;
+          opacity: 0.7;
+        }
+        :global(.tg-message .tg-spoiler) {
+          background: linear-gradient(90deg, #475569, #334155);
+          color: transparent;
+          border-radius: 3px;
+          padding: 0 2px;
+          cursor: pointer;
+          transition: color 0.2s;
+        }
+        :global(.tg-message .tg-spoiler:hover) {
+          color: white;
+          background: #475569;
+        }
+        :global(.tg-message a) {
+          color: #6366f1;
+          text-decoration: underline;
+        }
+      `}</style>
     </div>
   );
 }
@@ -123,24 +188,49 @@ const PLACEHOLDER_VALUES: Record<string, string> = {
   username: 'ivan',
 };
 
-const ALLOWED_TAGS_RE = /<\/?(b|i|u|s|code|br|a)(\s[^>]*)?>/gi;
+/* ─────────── HTML renderer ─────────── */
 
 function renderHtml(text: string, previewName: string): string {
-  // 1) escape все < и > сначала
+  // 1) escape всё сначала
   let out = escapeHtml(text);
-  // 2) re-allow whitelisted tags
-  out = out.replace(/&lt;(\/?(b|i|u|s|code|br)(\s[^&]*)?)&gt;/gi, (_, inner: string) => `<${inner}>`);
-  // 3) <a href="..."> — отдельно, разрешаем url-only
+
+  // 2) re-allow whitelisted simple tags: b, i, u, s, code, pre, br
+  out = out.replace(
+    /&lt;(\/?(?:b|i|u|s|code|pre|br))&gt;/gi,
+    (_, inner: string) => `<${inner}>`,
+  );
+
+  // 3) blockquote с опциональным "expandable" атрибутом
+  out = out.replace(
+    /&lt;blockquote(\s+expandable)?&gt;/gi,
+    (_, exp: string | undefined) => (exp ? '<blockquote data-expandable="1">' : '<blockquote>'),
+  );
+  out = out.replace(/&lt;\/blockquote&gt;/gi, '</blockquote>');
+
+  // 4) tg-spoiler → <span class="tg-spoiler">
+  out = out.replace(/&lt;tg-spoiler&gt;/gi, '<span class="tg-spoiler">');
+  out = out.replace(/&lt;\/tg-spoiler&gt;/gi, '</span>');
+  // также поддержим <span class="tg-spoiler">
+  out = out.replace(
+    /&lt;span\s+class=&quot;tg-spoiler&quot;&gt;/gi,
+    '<span class="tg-spoiler">',
+  );
+
+  // 5) <a href="..."> — отдельно, разрешаем только http(s) и tg://
   out = out.replace(/&lt;a\s+href=&quot;([^&]+)&quot;&gt;/gi, (_, url: string) => {
-    const safe = url.replace(/[<>"']/g, '');
-    return `<a href="${safe}" class="text-indigo-600 underline">`;
+    const cleaned = url.replace(/[<>"']/g, '');
+    const safe = /^(https?:|tg:|mailto:)/i.test(cleaned) ? cleaned : '#';
+    return `<a href="${safe}">`;
   });
   out = out.replace(/&lt;\/a&gt;/gi, '</a>');
-  // 4) placeholder подстановка
+
+  // 6) подставить плейсхолдеры
   const values: Record<string, string> = { ...PLACEHOLDER_VALUES, first_name: previewName };
   out = out.replace(/\{(\w+)\}/g, (_, key: string) => values[key] || `{${key}}`);
-  // 5) перевод строк
+
+  // 7) перевод строк
   out = out.replace(/\n/g, '<br/>');
+
   return out;
 }
 

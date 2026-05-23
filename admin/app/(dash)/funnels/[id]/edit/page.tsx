@@ -7,11 +7,12 @@ import useSWR from 'swr';
 
 import { api, fetcher } from '@/lib/api';
 import {
-  Button, Card, Empty, Field, Input, PageHeader, Select, Textarea,
+  Button, Card, Empty, Field, Input, PageHeader, Select,
 } from '@/components/ui';
 import { ButtonsEditor, type ButtonRows } from '@/components/ButtonsEditor';
 import { FunnelProgress, type ProgressStep } from '@/components/FunnelProgress';
 import { TelegramPreview } from '@/components/TelegramPreview';
+import { RichTextEditor } from '@/components/RichTextEditor';
 import { QuickLeadMagnetUpload } from '@/components/QuickLeadMagnetUpload';
 import { EntryPointsSection } from '@/components/EntryPointsSection';
 import { ObservableTestPanel } from '@/components/ObservableTestPanel';
@@ -489,11 +490,15 @@ function StepEditor({
         </Field>
       </div>
 
-      <Field label="Текст сообщения" hint="HTML: <b>, <i>, <a href=…>. Плейсхолдеры: {first_name}, {username}. Превью справа обновляется на лету.">
-        <Textarea
-          rows={6}
+      <Field
+        label="Текст сообщения"
+        hint="Выделите фрагмент и примените форматирование тулбаром. Поддерживаются жирный, курсив, моноширинный, цитаты, спойлеры, ссылки. Превью справа обновляется на лету."
+      >
+        <RichTextEditor
+          rows={8}
           value={local.message_text}
-          onChange={(e) => setLocal({ ...local, message_text: e.target.value })}
+          onChange={(next) => setLocal({ ...local, message_text: next })}
+          placeholders={['first_name', 'username']}
         />
       </Field>
 
