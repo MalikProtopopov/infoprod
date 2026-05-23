@@ -4,3 +4,7 @@ node_modules
 Dockerfile
 .dockerignore
 README.md
+__tests__
+coverage
+vitest.config.ts
+tsconfig.tsbuildinfo
