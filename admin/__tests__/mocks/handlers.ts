@@ -102,4 +102,9 @@ export const handlers = [
       recent_payments: [],
     }),
   ),
+
+  // Funnels module
+  http.get(`${API}/funnels`, () => HttpResponse.json([])),
+  http.get(`${API}/lead-magnets`, () => HttpResponse.json([])),
+  http.get(`${API}/funnel-triggers`, () => HttpResponse.json([])),
 ];

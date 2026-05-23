@@ -23,13 +23,16 @@ type Product = {
   price_12m: string;
   currency: string;
   is_active: boolean;
+  default_funnel_id: number | null;
 };
 
 type Channel = { id: number; title: string };
+type Funnel = { id: number; name: string; product_id: number };
 
 export default function ProductsPage() {
   const { data, mutate, isLoading } = useSWR<Product[]>('/products', fetcher);
   const { data: channels } = useSWR<Channel[]>('/channels', fetcher);
+  const { data: funnels } = useSWR<Funnel[]>('/funnels', fetcher);
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
@@ -38,6 +41,7 @@ export default function ProductsPage() {
     channel_id: '' as number | '',
     price_3m: '0', price_6m: '0', price_12m: '0',
     currency: 'RUB', is_active: true,
+    default_funnel_id: '' as number | '',
   });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -47,7 +51,7 @@ export default function ProductsPage() {
     setForm({
       code: '', name: '', description: '', cover_url: '',
       channel_id: '', price_3m: '0', price_6m: '0', price_12m: '0',
-      currency: 'RUB', is_active: true,
+      currency: 'RUB', is_active: true, default_funnel_id: '',
     });
     setError(null); setOpen(true);
   }
@@ -59,13 +63,14 @@ export default function ProductsPage() {
       cover_url: p.cover_url ?? '', channel_id: p.channel_id,
       price_3m: p.price_3m, price_6m: p.price_6m, price_12m: p.price_12m,
       currency: p.currency, is_active: p.is_active,
+      default_funnel_id: p.default_funnel_id ?? '',
     });
     setError(null); setOpen(true);
   }
 
   async function save() {
     setBusy(true); setError(null);
-    const payload = {
+    const payload: Record<string, unknown> = {
       code: form.code,
       name: form.name,
       description: form.description || null,
@@ -77,6 +82,10 @@ export default function ProductsPage() {
       currency: form.currency || 'RUB',
       is_active: form.is_active,
     };
+    // default_funnel_id передаём только в update — на create продукта ещё нет
+    if (editing) {
+      payload.default_funnel_id = form.default_funnel_id ? Number(form.default_funnel_id) : null;
+    }
     try {
       if (editing) await api.patch(`/products/${editing.id}`, payload);
       else await api.post('/products', payload);
@@ -211,6 +220,23 @@ export default function ProductsPage() {
           <Field label="Валюта">
             <Input value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })} />
           </Field>
+
+          {editing && (
+            <Field label="Воронка по умолчанию" hint="Запустится автоматически когда пользователь оставит заявку на этот продукт">
+              <Select
+                value={form.default_funnel_id}
+                onChange={(e) => setForm({ ...form, default_funnel_id: e.target.value ? Number(e.target.value) : '' })}
+              >
+                <option value="">— нет —</option>
+                {(funnels || [])
+                  .filter((f) => f.product_id === editing.id)
+                  .map((f) => (
+                    <option key={f.id} value={f.id}>{f.name}</option>
+                  ))}
+              </Select>
+            </Field>
+          )}
+
           <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
             <input
               type="checkbox"

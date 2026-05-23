@@ -60,6 +60,21 @@ const I = {
       <circle cx="6" cy="6" r="3" /><circle cx="18" cy="18" r="3" /><path d="M9 6h6l3 12" />
     </svg>
   ),
+  Funnel: () => (
+    <svg className={baseIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 5h18l-7 8v6l-4 2v-8z" />
+    </svg>
+  ),
+  Magnet: () => (
+    <svg className={baseIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 4v8a6 6 0 0 0 12 0V4" /><path d="M6 4h4" /><path d="M14 4h4" />
+    </svg>
+  ),
+  Trigger: () => (
+    <svg className={baseIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M13 2L3 14h7l-1 8 10-12h-7z" />
+    </svg>
+  ),
 };
 
 const NAV: Array<{ href: string; label: string; icon: ReactNode; group?: string }> = [
@@ -72,6 +87,9 @@ const NAV: Array<{ href: string; label: string; icon: ReactNode; group?: string 
   { href: '/products', label: 'Продукты', icon: <I.Product /> },
   { href: '/channels', label: 'Каналы', icon: <I.Channel /> },
   { href: '/bots', label: 'Боты', icon: <I.Bot /> },
+  { href: '/funnels', label: 'Воронки', icon: <I.Funnel /> },
+  { href: '/lead-magnets', label: 'Лидмагниты', icon: <I.Magnet /> },
+  { href: '/funnel-triggers', label: 'Кодовые слова', icon: <I.Trigger /> },
 ];
 
 export default function DashLayout({ children }: { children: ReactNode }) {

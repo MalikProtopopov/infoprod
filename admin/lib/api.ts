@@ -24,9 +24,32 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return data as T;
 }
 
+async function requestForm<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    body: form,
+  });
+  if (res.status === 401) {
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+      window.location.href = '/login';
+    }
+    throw new Error('Unauthorized');
+  }
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!res.ok) {
+    const detail = (data && (data.detail || data.message)) || res.statusText;
+    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+  }
+  return data as T;
+}
+
 export const api = {
   get: <T,>(p: string) => request<T>('GET', p),
   post: <T,>(p: string, b?: unknown) => request<T>('POST', p, b),
+  postForm: <T,>(p: string, form: FormData) => requestForm<T>(p, form),
   patch: <T,>(p: string, b?: unknown) => request<T>('PATCH', p, b),
   del: <T,>(p: string) => request<T>('DELETE', p),
 };

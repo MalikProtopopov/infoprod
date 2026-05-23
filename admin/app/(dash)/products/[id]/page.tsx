@@ -57,6 +57,10 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
     fetcher,
   );
   const { data: bots } = useSWR<Bot[]>('/bots', fetcher);
+  const { data: productFunnels } = useSWR<{ id: number; name: string }[]>(
+    product ? `/funnels?product_id=${product.id}` : null,
+    fetcher,
+  );
 
   const [createOpen, setCreateOpen] = useState(false);
   const [createdLink, setCreatedLink] = useState<TrackingLink | null>(null);
@@ -71,6 +75,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
     notes: '',
     custom_slug: '',
     bot_id: '' as number | '',
+    funnel_id: '' as number | '',
     show_advanced: false,
   });
 
@@ -84,6 +89,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
     setForm({
       utm_source: '', utm_medium: '', utm_campaign: '', notes: '', custom_slug: '',
       bot_id: bots && bots.length === 1 ? bots[0].id : '',
+      funnel_id: '',
       show_advanced: false,
     });
     setError(null);
@@ -106,6 +112,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
       if (form.utm_campaign) body.utm_campaign = form.utm_campaign;
       if (form.notes) body.notes = form.notes;
       if (form.bot_id) body.bot_id = Number(form.bot_id);
+      if (form.funnel_id) body.funnel_id = Number(form.funnel_id);
       if (form.show_advanced && form.custom_slug) body.custom_slug = form.custom_slug;
       const link = await api.post<TrackingLink>('/tracking-links', body);
       setCreatedLink(link);
@@ -221,6 +228,35 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
         )}
       </Card>
 
+      {/* Воронки этого продукта */}
+      <Card padded className="mt-5 anim-rise">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold flex items-center gap-2">
+            <span className="size-1.5 rounded-full bg-amber-500" /> Воронки этого продукта
+          </h3>
+          <Link href="/funnels">
+            <Button size="sm" variant="ghost">+ Создать воронку</Button>
+          </Link>
+        </div>
+        {!productFunnels || productFunnels.length === 0 ? (
+          <Empty>Воронок ещё нет</Empty>
+        ) : (
+          <ul className="space-y-1.5">
+            {productFunnels.map((f) => (
+              <li key={f.id}>
+                <Link
+                  href={`/funnels/${f.id}/edit`}
+                  className="flex items-center justify-between gap-3 px-3 py-2 rounded-xl hover:bg-white/60 transition"
+                >
+                  <span className="text-sm font-medium">{f.name}</span>
+                  <span className="text-xs text-indigo-600">→</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
       {copyMsg && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 glass-strong rounded-xl px-4 py-2 text-sm anim-fade">
           {copyMsg}
@@ -324,6 +360,18 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                 </Select>
               </Field>
             )}
+
+            <Field label="Запустить воронку при переходе" hint="Каждый кликнувший по ссылке попадёт в эту воронку">
+              <Select
+                value={form.funnel_id}
+                onChange={(e) => setForm({ ...form, funnel_id: e.target.value ? Number(e.target.value) : '' })}
+              >
+                <option value="">— без воронки —</option>
+                {(productFunnels || []).map((f) => (
+                  <option key={f.id} value={f.id}>{f.name}</option>
+                ))}
+              </Select>
+            </Field>
 
             <button
               type="button"
