@@ -5,6 +5,7 @@ import useSWR from 'swr';
 
 import { api, fetcher } from '@/lib/api';
 import { Button, Field, Input, Pill, Select, Sheet } from '@/components/ui';
+import { useToast } from '@/components/Toast';
 
 type Link = {
   id: number;
@@ -49,9 +50,22 @@ export function EntryPointsSection({
     fetcher,
   );
   const { data: bots } = useSWR<Bot[]>('/bots', fetcher);
+  const { showToast } = useToast();
 
   const [linkOpen, setLinkOpen] = useState(false);
   const [wordOpen, setWordOpen] = useState(false);
+
+  async function copyLink(slug: string) {
+    const url = botUsername
+      ? `https://t.me/${botUsername}?start=${slug}`
+      : `https://t.me/_?start=${slug}`;
+    try {
+      await navigator.clipboard?.writeText(url);
+      showToast('Ссылка скопирована');
+    } catch {
+      showToast('Не удалось скопировать ссылку', { type: 'error' });
+    }
+  }
 
   async function makeDefault() {
     try {
@@ -106,16 +120,15 @@ export function EntryPointsSection({
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    const url = botUsername
-                      ? `https://t.me/${botUsername}?start=${l.slug}`
-                      : `https://t.me/_?start=${l.slug}`;
-                    navigator.clipboard?.writeText(url);
-                  }}
-                  className="text-xs text-indigo-600 hover:underline whitespace-nowrap"
-                  title="Скопировать URL"
+                  onClick={() => copyLink(l.slug)}
+                  className="shrink-0 inline-flex items-center justify-center size-8 rounded-lg text-indigo-600 hover:bg-indigo-50 transition"
+                  title="Скопировать ссылку"
+                  aria-label="Скопировать ссылку"
                 >
-                  Копир.
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <rect x="9" y="9" width="13" height="13" rx="2" />
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                  </svg>
                 </button>
               </div>
             ))}
@@ -228,6 +241,7 @@ function NewLinkSheet({
   const [created, setCreated] = useState<{ slug: string; url: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { showToast } = useToast();
 
   const MEDIUMS = ['reels', 'post', 'story', 'video', 'email', 'другое'];
 
@@ -279,7 +293,14 @@ function NewLinkSheet({
             <Input value={created.url} readOnly className="font-mono text-xs" />
           </Field>
           <Button
-            onClick={() => navigator.clipboard?.writeText(created.url)}
+            onClick={async () => {
+              try {
+                await navigator.clipboard?.writeText(created.url);
+                showToast('Ссылка скопирована');
+              } catch {
+                showToast('Не удалось скопировать ссылку', { type: 'error' });
+              }
+            }}
             className="w-full"
           >
             📋 Скопировать ссылку

@@ -2,6 +2,8 @@ import './globals.css';
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 
+import { ToastProvider } from '@/components/Toast';
+
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
 
 export const metadata: Metadata = {
@@ -69,7 +71,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
           <div className="absolute -top-40 right-[-10rem] w-[36rem] h-[36rem] rounded-full bg-rose-400/20 blur-3xl anim-blob-2" />
           <div className="absolute bottom-[-12rem] left-1/3 w-[42rem] h-[42rem] rounded-full bg-teal-300/20 blur-3xl anim-blob-3" />
         </div>
-        {children}
+        <ToastProvider>{children}</ToastProvider>
       </body>
     </html>
   );
