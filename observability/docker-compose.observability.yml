@@ -15,6 +15,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -25,6 +26,21 @@ services:
       - internal
     expose:
       - "9090"
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: infobizbot-alertmanager
+    restart: unless-stopped
+    volumes:
+      - ./observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    networks:
+      - internal
+    expose:
+      - "9093"
 
   loki:
     image: grafana/loki:3.3.0
@@ -83,6 +99,7 @@ volumes:
   prometheus_data:
   loki_data:
   grafana_data:
+  alertmanager_data:
 
 # Запускается рядом с main docker-compose.yml — все наследуют одну дефолтную сеть.
 # Если запускаешь обычным `docker compose -f docker-compose.yml -f observability/...`

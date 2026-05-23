@@ -1,0 +1,63 @@
+groups:
+  - name: infobizbot-backend
+    interval: 30s
+    rules:
+      - alert: BackendDown
+        expr: up{job="backend"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: backend
+        annotations:
+          summary: "Backend down ({{ $labels.instance }})"
+          description: "Prometheus scrape по backend:8000/metrics не возвращает up=1 уже 1+ минуту"
+
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{app="backend",status=~"5.."}[5m]))
+            /
+            sum(rate(http_requests_total{app="backend"}[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: backend
+        annotations:
+          summary: "5xx > 5% за 5 минут на backend"
+          description: "Доля 5xx-ответов превысила 5% от общего трафика на 5+ минут"
+
+      - alert: HighLatencyP95
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(http_request_duration_seconds_bucket{app="backend"}[5m]))
+          ) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+          service: backend
+        annotations:
+          summary: "p95 latency > 1s"
+          description: "95-й перцентиль времени ответа backend > 1 секунды на 5+ минут"
+
+      - alert: TooManyInFlight
+        expr: http_requests_in_flight{app="backend"} > 50
+        for: 2m
+        labels:
+          severity: warning
+          service: backend
+        annotations:
+          summary: "Слишком много активных запросов"
+          description: "В backend одновременно > 50 запросов — возможна перегрузка / dead-lock"
+
+  - name: infobizbot-prometheus
+    rules:
+      - alert: PrometheusTargetDown
+        expr: up == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Target {{ $labels.job }} ({{ $labels.instance }}) down"
+          description: "Prometheus не получает метрики от этого target 5+ минут"

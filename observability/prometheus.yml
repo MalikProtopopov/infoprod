@@ -4,6 +4,14 @@ global:
   external_labels:
     service: infobizbot
 
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
 scrape_configs:
   # Сам Prometheus
   - job_name: prometheus
@@ -17,3 +25,8 @@ scrape_configs:
       - targets: ['backend:8000']
         labels:
           app: backend
+
+  # Alertmanager собственные метрики
+  - job_name: alertmanager
+    static_configs:
+      - targets: ['alertmanager:9093']

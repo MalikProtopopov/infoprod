@@ -145,6 +145,15 @@ async def create_payment(
         user_id=user.id, product_id=product.id,
     )
 
+    # Audit
+    from app.services.audit import log_action
+    await log_action(
+        session, admin_id=admin.id, action="create",
+        resource_type="payment", resource_id=payment.id,
+        summary=f"Payment {payment.amount} {payment.currency} за {payment.period_months} мес. для user_id={payment.user_id}",
+        payload={"product_id": payment.product_id, "amount": str(payment.amount), "period_months": payment.period_months},
+    )
+
     await session.commit()
     await session.refresh(payment)
 

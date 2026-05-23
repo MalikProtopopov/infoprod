@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import current_admin, get_session
+from app.api.deps import current_admin, get_session, require_role
 from app.models.admin import Admin
 from app.models.channel import Channel
 from app.models.lead import Lead
@@ -153,3 +153,90 @@ async def update_user(
     await session.commit()
     await session.refresh(user)
     return UserOut.model_validate(user, from_attributes=True)
+
+
+# ───────── GDPR endpoints ─────────
+
+@router.get("/{user_id}/export")
+async def gdpr_export(
+    user_id: int,
+    admin: Admin = Depends(current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """GDPR-export: возвращает все данные пользователя в JSON."""
+    from app.services.audit import log_action
+
+    user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    leads = (
+        await session.execute(select(Lead).where(Lead.user_id == user_id))
+    ).scalars().all()
+    payments = (
+        await session.execute(select(Payment).where(Payment.user_id == user_id))
+    ).scalars().all()
+    subs = (
+        await session.execute(select(Subscription).where(Subscription.user_id == user_id))
+    ).scalars().all()
+
+    await log_action(
+        session, admin_id=admin.id, action="gdpr_export",
+        resource_type="user", resource_id=user_id,
+        summary=f"GDPR export для user_id={user_id}",
+    )
+    await session.commit()
+
+    def _serialize_row(obj):
+        out = {}
+        for c in obj.__table__.columns:
+            v = getattr(obj, c.name)
+            if hasattr(v, "isoformat"):
+                v = v.isoformat()
+            out[c.name] = v
+        return out
+
+    return {
+        "user": _serialize_row(user),
+        "leads": [_serialize_row(l) for l in leads],
+        "payments": [_serialize_row(p) for p in payments],
+        "subscriptions": [_serialize_row(s) for s in subs],
+    }
+
+
+@router.delete("/{user_id}/forget", status_code=204, response_class=Response)
+async def gdpr_forget(
+    user_id: int,
+    admin: Admin = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """GDPR right-to-be-forgotten: анонимизация (без удаления PII-зависимых записей).
+
+    Заменяет personal-поля на null и хеш telegram_user_id. Лиды/платежи остаются для финансовой
+    аналитики, но без связи с реальной личностью.
+    """
+    from app.services.audit import log_action
+
+    user = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Удаляем PII
+    user.username = None
+    user.first_name = "[redacted]"
+    user.last_name = None
+    user.phone = None
+    user.email = None
+    user.notes = None
+    user.notifications_enabled = False
+    # telegram_user_id не трогаем — это unique-key. Заменяем на отрицательное (виртуальное).
+    if user.telegram_user_id > 0:
+        user.telegram_user_id = -user.telegram_user_id
+
+    await log_action(
+        session, admin_id=admin.id, action="gdpr_forget",
+        resource_type="user", resource_id=user_id,
+        summary=f"GDPR forget для user_id={user_id}",
+    )
+    await session.commit()
+    return Response(status_code=204)

@@ -33,6 +33,7 @@ from app.api.funnels import entries_router as funnel_entries_router  # noqa: E40
 from app.api.funnels import steps_router as funnel_steps_router  # noqa: E402
 from app.api.lead_magnets import router as lead_magnets_router  # noqa: E402
 from app.api.funnel_triggers import router as funnel_triggers_router  # noqa: E402
+from app.api.audit_log import router as audit_router  # noqa: E402
 from app.bot import manager as bot_manager  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.workers import scheduler  # noqa: E402
@@ -108,5 +109,6 @@ api.include_router(funnel_entries_router)
 api.include_router(funnel_steps_router)
 api.include_router(lead_magnets_router)
 api.include_router(funnel_triggers_router)
+api.include_router(audit_router)
 
 app.include_router(api)

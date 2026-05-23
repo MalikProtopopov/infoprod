@@ -14,4 +14,6 @@ class Admin(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     username: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # RBAC роль: 'admin' (всё) | 'manager' (без destructive) | 'viewer' (только GET)
+    role: Mapped[str] = mapped_column(String(16), nullable=False, default="admin")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

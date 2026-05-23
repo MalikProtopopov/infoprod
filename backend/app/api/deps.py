@@ -32,3 +32,46 @@ async def current_admin(
     if not admin:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin not found")
     return admin
+
+
+# ───────── RBAC ─────────
+
+ROLE_PERMS = {
+    # roles → набор разрешений; * = всё
+    "admin": {"*"},
+    "manager": {"read", "create", "update"},  # без delete
+    "viewer": {"read"},
+}
+
+
+def require_role(*allowed: str):
+    """Dependency: разрешает доступ только указанным ролям.
+
+    Использование:
+        @router.delete(..., dependencies=[Depends(require_role("admin"))])
+    """
+    allowed_set = set(allowed)
+
+    async def _check(admin: Admin = Depends(current_admin)) -> Admin:
+        if admin.role not in allowed_set:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Требуется одна из ролей: {', '.join(sorted(allowed_set))}",
+            )
+        return admin
+
+    return _check
+
+
+def require_perm(perm: str):
+    """Dependency: проверка по permission ('read'/'create'/'update'/'delete')."""
+    async def _check(admin: Admin = Depends(current_admin)) -> Admin:
+        perms = ROLE_PERMS.get(admin.role, set())
+        if "*" not in perms and perm not in perms:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Роль {admin.role!r} не имеет права {perm!r}",
+            )
+        return admin
+
+    return _check
