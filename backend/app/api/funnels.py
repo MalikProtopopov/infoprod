@@ -9,7 +9,9 @@ from app.models.admin import Admin
 from app.models.funnel import Funnel
 from app.models.funnel_entry import FunnelEntry
 from app.models.funnel_step import FunnelStep
+from app.models.funnel_trigger import FunnelTrigger
 from app.models.product import Product
+from app.models.tracking_link import TrackingLink
 from app.models.user import User
 from app.schemas.funnel import (
     FunnelCreate,
@@ -276,6 +278,216 @@ async def list_entries(
         )
         for e, fn, un in rows
     ]
+
+
+@router.get("/{funnel_id}/entry-points", response_model=dict)
+async def get_entry_points(
+    funnel_id: int,
+    _: Admin = Depends(current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Агрегат всех точек входа в одну воронку: trackable links, triggers, default-flag.
+
+    Используется в Студии (§3 UI) — за 1 запрос даёт полный статус готовности.
+    """
+    f = await session.get(Funnel, funnel_id)
+    if f is None:
+        raise HTTPException(status_code=404, detail="Funnel not found")
+
+    # 1) Trackable links с этой воронкой
+    link_rows = (
+        await session.execute(
+            select(TrackingLink)
+            .where(TrackingLink.funnel_id == funnel_id, TrackingLink.is_active.is_(True))
+            .order_by(TrackingLink.id.desc())
+        )
+    ).scalars().all()
+    links = [
+        {
+            "id": l.id,
+            "slug": l.slug,
+            "utm_source": l.utm_source,
+            "utm_medium": l.utm_medium,
+            "utm_campaign": l.utm_campaign,
+            "click_count": l.click_count,
+            "unique_users": l.unique_users,
+        }
+        for l in link_rows
+    ]
+
+    # 2) Кодовые слова
+    trigger_rows = (
+        await session.execute(
+            select(FunnelTrigger)
+            .where(FunnelTrigger.funnel_id == funnel_id)
+            .order_by(FunnelTrigger.id.desc())
+        )
+    ).scalars().all()
+    triggers = [
+        {
+            "id": t.id,
+            "word": t.word,
+            "is_active": t.is_active,
+            "use_count": t.use_count,
+        }
+        for t in trigger_rows
+    ]
+
+    # 3) Является ли default-воронкой для своего продукта
+    prod = await session.get(Product, f.product_id)
+    is_default = bool(prod and prod.default_funnel_id == funnel_id)
+
+    return {
+        "funnel_id": funnel_id,
+        "product_id": f.product_id,
+        "tracking_links": links,
+        "triggers": triggers,
+        "is_product_default": is_default,
+        "has_any": bool(links or triggers or is_default),
+    }
+
+
+@router.post("/{funnel_id}/test-run", response_model=dict, status_code=201)
+async def test_run(
+    funnel_id: int,
+    admin: Admin = Depends(current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Запускает тестовый прогон воронки на текущего админа со скоростью x60.
+
+    Каждый шаг с delay_minutes=N будет отправлен через N секунд (не минут).
+    Воркер process_due_messages подхватит scheduled_messages когда их время придёт.
+
+    Возвращает test_user_id для последующего опроса прогресса.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.scheduled_message import ScheduledMessage
+    from app.models.user import User
+
+    f = await session.get(Funnel, funnel_id)
+    if f is None:
+        raise HTTPException(status_code=404, detail="Funnel not found")
+
+    # Тест-юзер: используем admin'а как Telegram-юзера, но без реального telegram_user_id.
+    # На самом деле для отправки нужно знать telegram_user_id. Берём env var E2E_TEST_TG_ID
+    # или возвращаем 422 с просьбой указать в запросе. Для упрощения — принимаем admin как реален.
+    # Минимальная версия: создаём виртуального user'а от имени admin'а.
+    # ⚠️ Если у админа нет telegram_user_id (т.е. он не отметил себя через бота) — придётся
+    # попросить указать его в payload. Для v1 — добавим этот endpoint с возможностью передать tg_id.
+
+    test_user = (
+        await session.execute(
+            select(User).where(User.telegram_user_id == admin.id).limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if test_user is None:
+        # Создаём виртуального юзера для теста
+        test_user = User(
+            telegram_user_id=-(admin.id),  # отрицательный, чтобы не конфликтовать
+            first_name=admin.username,
+            username=admin.username,
+            notifications_enabled=True,
+        )
+        session.add(test_user)
+        await session.flush()
+
+    steps = (
+        await session.execute(
+            select(FunnelStep)
+            .where(FunnelStep.funnel_id == funnel_id, FunnelStep.is_active.is_(True))
+            .order_by(FunnelStep.order_idx)
+        )
+    ).scalars().all()
+
+    if not steps:
+        raise HTTPException(status_code=422, detail="В воронке нет активных шагов")
+
+    now = datetime.now(tz=timezone.utc)
+    # Создаём entry с source='manual', чтобы отличать от реальных
+    entry = FunnelEntry(
+        funnel_id=funnel_id,
+        user_id=test_user.id,
+        source="manual",
+        source_ref=admin.id,
+        started_at=now,
+        status="active",
+    )
+    session.add(entry)
+    await session.flush()
+
+    # Планируем сообщения с delay/60 секунд вместо минут
+    schedules = []
+    for step in steps:
+        delay_seconds = max(1, int(step.delay_minutes))  # min 1 сек
+        sched = ScheduledMessage(
+            user_id=test_user.id,
+            funnel_entry_id=entry.id,
+            funnel_step_id=step.id,
+            scheduled_at=now + timedelta(seconds=delay_seconds),
+        )
+        session.add(sched)
+        schedules.append({
+            "step_id": step.id,
+            "order_idx": step.order_idx,
+            "scheduled_at": (now + timedelta(seconds=delay_seconds)).isoformat(),
+            "delay_seconds": delay_seconds,
+            "original_delay_minutes": step.delay_minutes,
+        })
+
+    await session.commit()
+
+    return {
+        "test_entry_id": entry.id,
+        "test_user_id": test_user.id,
+        "steps_scheduled": len(schedules),
+        "schedules": schedules,
+        "started_at": now.isoformat(),
+        "speedup_factor": 60,
+        "note": "Сообщения придут в Telegram если у админа настроен telegram_user_id; "
+                "иначе можно опрашивать /test-run/{test_entry_id}/status для прогресса.",
+    }
+
+
+@router.get("/{funnel_id}/test-run/{test_entry_id}/status", response_model=dict)
+async def test_run_status(
+    funnel_id: int,
+    test_entry_id: int,
+    _: Admin = Depends(current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Прогресс тестового прогона: какой шаг отправлен, какой ожидает."""
+    from app.models.scheduled_message import ScheduledMessage
+
+    entry = await session.get(FunnelEntry, test_entry_id)
+    if entry is None or entry.funnel_id != funnel_id:
+        raise HTTPException(status_code=404, detail="Test entry not found")
+
+    msgs = (
+        await session.execute(
+            select(ScheduledMessage, FunnelStep)
+            .join(FunnelStep, FunnelStep.id == ScheduledMessage.funnel_step_id)
+            .where(ScheduledMessage.funnel_entry_id == test_entry_id)
+            .order_by(FunnelStep.order_idx)
+        )
+    ).all()
+
+    return {
+        "entry_id": test_entry_id,
+        "entry_status": entry.status,
+        "messages": [
+            {
+                "step_order_idx": s.order_idx,
+                "step_message_text": s.message_text[:100],
+                "scheduled_at": m.scheduled_at.isoformat(),
+                "sent_at": m.sent_at.isoformat() if m.sent_at else None,
+                "cancelled_at": m.cancelled_at.isoformat() if m.cancelled_at else None,
+                "error": m.error,
+            }
+            for m, s in msgs
+        ],
+    }
 
 
 # ===== entries endpoints (отдельный router без funnel_id) =====

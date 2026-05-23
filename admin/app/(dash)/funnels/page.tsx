@@ -5,10 +5,8 @@ import { useState } from 'react';
 import useSWR from 'swr';
 
 import { api, fetcher } from '@/lib/api';
-import {
-  Button, Card, Empty, Field, Input, PageHeader, Pill, Select, Sheet,
-  TableHead, TableWrap, Td, Textarea, Th, Tr,
-} from '@/components/ui';
+import { Button, Card, PageHeader, Pill } from '@/components/ui';
+import { FunnelWizard } from '@/components/FunnelWizard';
 
 type Funnel = {
   id: number;
@@ -26,38 +24,24 @@ type Funnel = {
 
 type Product = { id: number; name: string; code: string };
 
-export default function FunnelsPage() {
+type EntryStatus = 'green' | 'yellow' | 'red' | 'gray';
+
+function statusOf(f: Funnel, hasAny: boolean): EntryStatus {
+  if (f.is_active && hasAny && f.steps_count > 0) return 'green';
+  if (f.steps_count === 0 || !hasAny) return 'yellow';
+  if (!f.is_active) return 'gray';
+  return 'red';
+}
+
+function statusLabel(s: EntryStatus): string {
+  return { green: 'Активна', yellow: 'Не запущена', red: 'Ошибка', gray: 'Черновик' }[s];
+}
+
+
+export default function FunnelsHubPage() {
   const { data, mutate, isLoading } = useSWR<Funnel[]>('/funnels', fetcher);
   const { data: products } = useSWR<Product[]>('/products', fetcher);
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({
-    name: '', description: '', product_id: '' as number | '',
-    ttl_days: 90, cancel_on_payment: true,
-  });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function create() {
-    if (!form.product_id) return;
-    setBusy(true); setError(null);
-    try {
-      const created = await api.post<Funnel>('/funnels', {
-        name: form.name.trim(),
-        description: form.description.trim() || null,
-        product_id: Number(form.product_id),
-        ttl_days: Number(form.ttl_days),
-        cancel_on_payment: form.cancel_on_payment,
-        steps: [],
-      });
-      setOpen(false);
-      setForm({ name: '', description: '', product_id: '', ttl_days: 90, cancel_on_payment: true });
-      mutate();
-      // переходим в редактор
-      window.location.href = `/funnels/${created.id}/edit`;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally { setBusy(false); }
-  }
+  const [wizardOpen, setWizardOpen] = useState(false);
 
   async function remove(f: Funnel) {
     if (!confirm(`Удалить воронку "${f.name}"?`)) return;
@@ -65,130 +49,199 @@ export default function FunnelsPage() {
     catch (e) { alert(e instanceof Error ? e.message : String(e)); }
   }
 
+  const stats = (data || []).reduce(
+    (acc, f) => {
+      if (f.is_active && f.steps_count > 0) acc.active++;
+      else if (f.steps_count === 0) acc.draft++;
+      else acc.todo++;
+      return acc;
+    },
+    { active: 0, draft: 0, todo: 0 },
+  );
+
+  const hasProducts = (products?.length || 0) > 0;
+
   return (
     <div>
       <PageHeader
         title="Воронки"
-        subtitle="Цепочки follow-up сообщений с лидмагнитами и кнопкой отписки"
-        action={<Button onClick={() => setOpen(true)}>+ Создать воронку</Button>}
+        subtitle={
+          data && data.length > 0
+            ? `${stats.active} активных · ${stats.draft} черновиков · ${stats.todo} требуют настройки`
+            : 'Цепочки follow-up сообщений с лидмагнитами, прерываемые при оплате'
+        }
+        action={
+          hasProducts ? (
+            <Button onClick={() => setWizardOpen(true)}>+ Создать новую воронку</Button>
+          ) : null
+        }
       />
 
-      <Card>
-        {isLoading && <div className="p-6 text-sm text-zinc-500">Загрузка…</div>}
-        {!isLoading && (!data || data.length === 0) && <Empty>Воронок пока нет</Empty>}
-        {data && data.length > 0 && (
-          <TableWrap>
-            <table className="w-full text-sm min-w-[860px]">
-              <TableHead>
-                <Th>Название</Th>
-                <Th>Шагов</Th>
-                <Th>Активных</Th>
-                <Th>Завершено</Th>
-                <Th>TTL</Th>
-                <Th>Auto-cancel</Th>
-                <Th>Статус</Th>
-                <Th className="text-right">Действия</Th>
-              </TableHead>
-              <tbody>
-                {data.map((f) => (
-                  <Tr key={f.id}>
-                    <Td className="font-medium">
-                      <Link href={`/funnels/${f.id}/edit`} className="hover:text-indigo-600 transition">
-                        {f.name}
-                      </Link>
-                      {f.description && (
-                        <div className="text-xs text-zinc-500 mt-0.5 truncate max-w-[260px]">{f.description}</div>
-                      )}
-                    </Td>
-                    <Td><Pill color={f.steps_count > 0 ? 'indigo' : 'gray'}>{f.steps_count}</Pill></Td>
-                    <Td><Pill color={f.active_entries > 0 ? 'green' : 'gray'}>{f.active_entries}</Pill></Td>
-                    <Td className="text-zinc-600">{f.completed_entries}</Td>
-                    <Td className="text-zinc-600">{f.ttl_days} дн.</Td>
-                    <Td>
-                      {f.cancel_on_payment
-                        ? <Pill color="violet">да</Pill>
-                        : <Pill color="gray">нет</Pill>}
-                    </Td>
-                    <Td>
-                      {f.is_active
-                        ? <Pill color="green">активна</Pill>
-                        : <Pill color="gray">выключена</Pill>}
-                    </Td>
-                    <Td className="text-right">
-                      <div className="inline-flex gap-1.5 flex-wrap justify-end">
-                        <Link href={`/funnels/${f.id}/edit`}>
-                          <Button size="sm" variant="ghost">Редакт.</Button>
-                        </Link>
-                        <Link href={`/funnels/${f.id}/entries`}>
-                          <Button size="sm" variant="ghost">Подписчики</Button>
-                        </Link>
-                        <Button size="sm" variant="danger" onClick={() => remove(f)}>Удалить</Button>
-                      </div>
-                    </Td>
-                  </Tr>
-                ))}
-              </tbody>
-            </table>
-          </TableWrap>
-        )}
-      </Card>
-
-      <Sheet
-        open={open}
-        onClose={() => setOpen(false)}
-        title="Создать воронку"
-        description="Основные параметры — шаги добавляются в редакторе после создания"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setOpen(false)}>Отмена</Button>
-            <Button onClick={create} disabled={busy || !form.name.trim() || !form.product_id}>
-              {busy ? 'Создаём…' : 'Создать'}
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-4">
-          <Field label="Название" required>
-            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Воронка А: Клиентский клуб" autoFocus />
-          </Field>
-          <Field label="Описание" hint="Внутренняя заметка для админа">
-            <Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} />
-          </Field>
-          <Field label="Продукт" required hint="Воронка привязана к одному продукту">
-            <Select value={form.product_id} onChange={(e) => setForm({ ...form, product_id: e.target.value ? Number(e.target.value) : '' })}>
-              <option value="">— выберите —</option>
-              {(products || []).map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </Select>
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="TTL, дней" hint="Сколько хранить активной">
-              <Input
-                type="number"
-                min={1}
-                max={365}
-                value={form.ttl_days}
-                onChange={(e) => setForm({ ...form, ttl_days: Number(e.target.value) })}
-              />
-            </Field>
-            <Field label="Auto-cancel" hint="Отменять при оплате продукта">
-              <Select
-                value={form.cancel_on_payment ? 'yes' : 'no'}
-                onChange={(e) => setForm({ ...form, cancel_on_payment: e.target.value === 'yes' })}
-              >
-                <option value="yes">Да</option>
-                <option value="no">Нет</option>
-              </Select>
-            </Field>
+      {!hasProducts && !isLoading && products !== undefined && (
+        <Card padded className="text-center py-10">
+          <div className="text-4xl mb-3">🎯</div>
+          <h3 className="text-lg font-semibold mb-2">Воронки прогревают будущих клиентов</h3>
+          <p className="text-sm text-zinc-600 mb-5 max-w-md mx-auto">
+            Серии follow-up сообщений с лидмагнитами, прерываемые при оплате продукта.
+          </p>
+          <div className="glass-soft rounded-2xl p-4 max-w-md mx-auto">
+            <p className="text-sm mb-3">Чтобы создать воронку, сначала нужен продукт.</p>
+            <Link href="/products?return=/funnels">
+              <Button>→ Создать первый продукт</Button>
+            </Link>
+            <p className="mt-3 text-xs text-zinc-500">
+              После создания продукта вы вернётесь сюда с pre-selected продуктом в wizard'е.
+            </p>
           </div>
-          {error && (
-            <div className="text-sm text-rose-600 bg-rose-50/80 border border-rose-200/60 rounded-xl px-3 py-2">
-              {error}
+        </Card>
+      )}
+
+      {hasProducts && (
+        <>
+          {isLoading && <div className="text-sm text-zinc-500 py-6">Загрузка…</div>}
+
+          {!isLoading && data && data.length === 0 && (
+            <Card padded className="text-center py-10">
+              <div className="text-4xl mb-3">🎯</div>
+              <h3 className="text-lg font-semibold mb-2">Воронок пока нет</h3>
+              <p className="text-sm text-zinc-600 mb-5 max-w-md mx-auto">
+                Создайте первую — wizard за 4 шага соберёт основу из готового шаблона.
+              </p>
+              <Button onClick={() => setWizardOpen(true)}>+ Создать первую воронку</Button>
+            </Card>
+          )}
+
+          {data && data.length > 0 && (
+            <div className="space-y-3">
+              {data.map((f) => (
+                <FunnelCard
+                  key={f.id}
+                  funnel={f}
+                  productName={products?.find((p) => p.id === f.product_id)?.name}
+                  onDelete={() => remove(f)}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {wizardOpen && (
+        <FunnelWizard
+          onClose={() => setWizardOpen(false)}
+          onCreated={() => { setWizardOpen(false); mutate(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+
+function FunnelCard({ funnel, productName, onDelete }: {
+  funnel: Funnel;
+  productName?: string;
+  onDelete: () => void;
+}) {
+  const { data: ep } = useSWR<{
+    has_any: boolean;
+    tracking_links: unknown[];
+    triggers: unknown[];
+    is_product_default: boolean;
+  }>(`/funnels/${funnel.id}/entry-points`, fetcher);
+  const hasAny = ep?.has_any ?? false;
+  const status = statusOf(funnel, hasAny);
+
+  const colorBar = {
+    green: 'bg-emerald-500',
+    yellow: 'bg-amber-500',
+    red: 'bg-rose-500',
+    gray: 'bg-zinc-400',
+  }[status];
+
+  const statusIcon = { green: '🟢', yellow: '🟡', red: '🔴', gray: '⚫' }[status];
+
+  const missing: string[] = [];
+  if (funnel.steps_count === 0) missing.push('шаги');
+  if (ep && !ep.has_any) missing.push('точки входа');
+  if (!funnel.is_active && funnel.steps_count > 0 && hasAny) missing.push('активацию');
+
+  const linksCount = ep?.tracking_links.length || 0;
+  const triggersCount = ep?.triggers.length || 0;
+  const isDefault = ep?.is_product_default || false;
+
+  return (
+    <Card padded className="anim-rise relative overflow-hidden">
+      <div className={`absolute top-0 left-0 bottom-0 w-1 ${colorBar}`} />
+
+      <div className="flex items-start justify-between gap-3 flex-wrap pl-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-base">{statusIcon}</span>
+            <Link href={`/funnels/${funnel.id}/edit`} className="font-semibold text-base hover:text-indigo-600 transition">
+              {funnel.name}
+            </Link>
+            <Pill color={status === 'green' ? 'green' : status === 'yellow' ? 'amber' : 'gray'}>
+              {statusLabel(status)}
+            </Pill>
+            {funnel.active_entries > 0 && (
+              <span className="text-xs text-zinc-500">· {funnel.active_entries} в воронке</span>
+            )}
+          </div>
+
+          <div className="text-xs text-zinc-500 mt-1 truncate">
+            {productName && <>Продукт: <b>{productName}</b></>}
+            <span> · {funnel.steps_count} {funnel.steps_count === 1 ? 'шаг' : 'шагов'}</span>
+            <span> · TTL {funnel.ttl_days} дн.</span>
+          </div>
+
+          {ep && ep.has_any && (
+            <div className="text-xs text-zinc-600 mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-zinc-400">Входы:</span>
+              {linksCount > 0 && (
+                <span className="inline-flex items-center gap-1">
+                  🔗 <b>{linksCount}</b> {linksCount === 1 ? 'ссылка' : 'ссылок'}
+                </span>
+              )}
+              {triggersCount > 0 && (
+                <span className="inline-flex items-center gap-1">
+                  💬 <b>{triggersCount}</b> {triggersCount === 1 ? 'слово' : 'слов'}
+                </span>
+              )}
+              {isDefault && <span className="inline-flex items-center gap-1">📋 default</span>}
+            </div>
+          )}
+
+          {missing.length > 0 && (
+            <div className="text-xs text-amber-700 mt-2">
+              ❗ Не настроено: {missing.join(', ')}
+            </div>
+          )}
+
+          {funnel.completed_entries > 0 && (
+            <div className="text-xs text-zinc-500 mt-1">
+              Завершено: <b>{funnel.completed_entries}</b>
             </div>
           )}
         </div>
-      </Sheet>
-    </div>
+
+        <div className="flex gap-1.5 flex-wrap">
+          {missing.length > 0 ? (
+            <Link
+              href={`/funnels/${funnel.id}/edit${missing[0] === 'шаги' ? '#s2' : missing[0] === 'точки входа' ? '#s3' : '#s4'}`}
+            >
+              <Button size="sm">Завершить настройку →</Button>
+            </Link>
+          ) : (
+            <Link href={`/funnels/${funnel.id}/edit`}>
+              <Button size="sm" variant="ghost">Открыть студию ↗</Button>
+            </Link>
+          )}
+          <Link href={`/funnels/${funnel.id}/entries`}>
+            <Button size="sm" variant="ghost">Подписчики</Button>
+          </Link>
+          <Button size="sm" variant="danger" onClick={onDelete}>×</Button>
+        </div>
+      </div>
+    </Card>
   );
 }
