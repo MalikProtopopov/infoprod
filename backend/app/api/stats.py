@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import current_admin, get_session
@@ -713,7 +713,6 @@ async def funnels_summary(
         )
     ).all()
     by_funnel: dict[int, dict] = {}
-    user_ids_by_funnel: dict[int, list[int]] = {}
     for fid, st, reason in entry_rows:
         m = by_funnel.setdefault(fid, {"entered": 0, "completed": 0, "cancelled_paid": 0, "cancelled_other": 0})
         m["entered"] += 1
@@ -725,40 +724,48 @@ async def funnels_summary(
             else:
                 m["cancelled_other"] += 1
 
-    # Получим user_ids для атрибуции платежей
-    user_rows = (
+    # Платежи — один запрос вместо N+1.
+    # JOIN FunnelEntry → Funnel → Payment (user_id и product_id),
+    # DISTINCT по (funnel_id, payment_id) убирает дубликаты от повторных entries того же юзера.
+    attributed = (
+        select(
+            FunnelEntry.funnel_id.label("funnel_id"),
+            Payment.id.label("payment_id"),
+            Payment.amount.label("amount"),
+        )
+        .select_from(FunnelEntry)
+        .join(Funnel, Funnel.id == FunnelEntry.funnel_id)
+        .join(
+            Payment,
+            and_(
+                Payment.user_id == FunnelEntry.user_id,
+                Payment.product_id == Funnel.product_id,
+            ),
+        )
+        .where(
+            FunnelEntry.funnel_id.in_(funnel_ids),
+            FunnelEntry.started_at >= from_,
+            FunnelEntry.started_at <= to,
+            FunnelEntry.source != "manual",
+            Payment.created_at >= from_,
+            Payment.created_at <= to,
+        )
+        .distinct()
+    ).subquery()
+    pay_rows = (
         await session.execute(
-            select(FunnelEntry.funnel_id, FunnelEntry.user_id)
-            .where(
-                FunnelEntry.funnel_id.in_(funnel_ids),
-                FunnelEntry.started_at >= from_,
-                FunnelEntry.started_at <= to,
-                FunnelEntry.source != "manual",
-            )
+            select(
+                attributed.c.funnel_id,
+                func.count(attributed.c.payment_id),
+                func.coalesce(func.sum(attributed.c.amount), 0),
+            ).group_by(attributed.c.funnel_id)
         )
     ).all()
-    for fid, uid in user_rows:
-        user_ids_by_funnel.setdefault(fid, []).append(uid)
-
-    # Платежи — батч
-    pay_by_funnel: dict[int, tuple[int, Decimal]] = {}
+    pay_by_funnel: dict[int, tuple[int, Decimal]] = {
+        fid: (int(pcnt or 0), Decimal(rev or 0)) for fid, pcnt, rev in pay_rows
+    }
     for f in funnels:
-        uids = user_ids_by_funnel.get(f.id, [])
-        if not uids:
-            pay_by_funnel[f.id] = (0, Decimal("0"))
-            continue
-        row = (
-            await session.execute(
-                select(func.count(Payment.id), func.coalesce(func.sum(Payment.amount), 0))
-                .where(
-                    Payment.user_id.in_(uids),
-                    Payment.product_id == f.product_id,
-                    Payment.created_at >= from_,
-                    Payment.created_at <= to,
-                )
-            )
-        ).one()
-        pay_by_funnel[f.id] = (int(row[0] or 0), Decimal(row[1] or 0))
+        pay_by_funnel.setdefault(f.id, (0, Decimal("0")))
 
     rows = []
     for f in funnels:
@@ -865,8 +872,8 @@ async def stats_health(
             "key": "no_tracking_links",
             "severity": "warning",
             "title": "Нет ни одной tracking-ссылки",
-            "message": "Без них невозможно отследить откуда пришли юзеры. Создайте первую — после этого появятся метрики по источникам.",
-            "action": {"label": "Создать ссылку", "href": "/tracking-links"},
+            "message": "Без них невозможно отследить откуда пришли юзеры. Откройте продукт и создайте первую ссылку — после этого появятся метрики по источникам.",
+            "action": {"label": "К продуктам", "href": "/products"},
         })
     elif leads_30d > 5 and attribution_pct < 20:
         warnings.append({
@@ -874,7 +881,7 @@ async def stats_health(
             "severity": "warning",
             "title": f"Только {attribution_pct:.0f}% лидов имеют атрибуцию",
             "message": "Большинство юзеров приходят без tracking-ссылок. Размещайте ссылки во всех каналах продвижения.",
-            "action": {"label": "Все ссылки", "href": "/tracking-links"},
+            "action": {"label": "К продуктам", "href": "/products"},
         })
 
     if sm_total > 0 and _safe_div(sm_failed, sm_total) > 0.2:

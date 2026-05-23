@@ -134,6 +134,7 @@ export default function AnalyticsPage() {
   }, [period]);
   const { data: funnelsSummary } = useSWR<FunnelsSummaryResp>(funnelsSummaryKey, fetcher, {
     revalidateOnFocus: false,
+    dedupingInterval: 60_000,
   });
 
   // --- Pareto: переколбасить points в строки по dim
@@ -188,11 +189,16 @@ export default function AnalyticsPage() {
 
       {/* --- Filters --- */}
       <div className="flex flex-col sm:flex-row gap-3 mb-5 flex-wrap">
-        <div className="inline-flex glass rounded-2xl p-1.5">
+        <div
+          className="inline-flex glass rounded-2xl p-1.5"
+          role="group"
+          aria-label="Период"
+        >
           {PERIODS.map((p) => (
             <button
               key={p.key}
               onClick={() => setPeriod(p.key)}
+              aria-pressed={period === p.key}
               className={clsx(
                 'px-3 sm:px-4 h-9 rounded-xl text-sm transition',
                 period === p.key ? 'bg-white shadow-soft text-ink' : 'text-zinc-600 hover:text-ink hover:bg-white/60',
@@ -221,36 +227,47 @@ export default function AnalyticsPage() {
           <option value="none">Без разреза</option>
         </Select>
 
-        <div className="inline-flex glass rounded-2xl p-1.5">
+        <div
+          className="inline-flex glass rounded-2xl p-1.5"
+          role="group"
+          aria-label="Модель атрибуции"
+        >
           <button
             onClick={() => setAttribution('last')}
+            aria-pressed={attribution === 'last'}
             className={clsx(
               'px-3 h-9 rounded-xl text-sm transition',
               attribution === 'last' ? 'bg-white shadow-soft text-ink' : 'text-zinc-600 hover:text-ink hover:bg-white/60',
             )}
-            title="Атрибуция по последнему касанию перед заявкой"
+            title="По последнему касанию: источник последней заявки юзера перед оплатой"
           >
-            Last-touch
+            Последнее касание
           </button>
           <button
             onClick={() => setAttribution('first')}
+            aria-pressed={attribution === 'first'}
             className={clsx(
               'px-3 h-9 rounded-xl text-sm transition',
               attribution === 'first' ? 'bg-white shadow-soft text-ink' : 'text-zinc-600 hover:text-ink hover:bg-white/60',
             )}
-            title="Атрибуция по первому касанию (первый заход в бота)"
+            title="По первому касанию: источник первого захода юзера в бота"
           >
-            First-touch
+            Первое касание
           </button>
         </div>
 
-        <div className="ml-auto inline-flex glass rounded-2xl p-1.5">
+        <div
+          className="ml-auto inline-flex glass rounded-2xl p-1.5"
+          role="group"
+          aria-label="Гранулярность"
+        >
           {(['day', 'week', 'month'] as Granularity[]).map((g) => (
             <button
               key={g}
               onClick={() => setGranularity(g)}
+              aria-pressed={granularity === g}
               className={clsx(
-                'px-3 h-9 rounded-xl text-sm transition capitalize',
+                'px-3 h-9 rounded-xl text-sm transition',
                 granularity === g ? 'bg-white shadow-soft text-ink' : 'text-zinc-600 hover:text-ink hover:bg-white/60',
               )}
             >
@@ -262,7 +279,11 @@ export default function AnalyticsPage() {
 
       {/* --- Big numbers --- */}
       {timeline && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+        <div
+          className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5"
+          aria-live="polite"
+          aria-label="Сводные показатели за выбранный период"
+        >
           <BigNumber label="Лиды" value={timeline.totals.leads} />
           <BigNumber label="Оплаты" value={timeline.totals.payments} />
           <BigNumber label="Выручка" value={fmtMoney(timeline.totals.revenue) + ' ₽'} />
@@ -282,14 +303,23 @@ export default function AnalyticsPage() {
             <div className="text-sm font-semibold text-ink">Динамика по дням</div>
             <div className="text-xs text-zinc-500">
               {{ leads: 'Сколько лидов', payments: 'Сколько оплат', revenue: 'Сколько выручки' }[metric]}
-              {' '}приходило в каждый день · разрез по {{ source: 'источникам', campaign: 'кампаниям', product: 'продуктам', none: 'общему потоку' }[dimension]}
+              {' '}приходило в каждый день
+              {' · '}
+              {dimension === 'none'
+                ? 'без разреза'
+                : `разрез по ${{ source: 'источникам', campaign: 'кампаниям', product: 'продуктам' }[dimension]}`}
             </div>
           </div>
-          <div className="inline-flex glass rounded-2xl p-1">
+          <div
+            className="inline-flex glass rounded-2xl p-1"
+            role="group"
+            aria-label="Метрика"
+          >
             {(['leads', 'payments', 'revenue'] as Metric[]).map((m) => (
               <button
                 key={m}
                 onClick={() => setMetric(m)}
+                aria-pressed={metric === m}
                 className={clsx(
                   'px-3 h-8 rounded-xl text-xs transition',
                   metric === m ? 'bg-white shadow-soft text-ink' : 'text-zinc-500 hover:text-ink hover:bg-white/60',
@@ -308,7 +338,17 @@ export default function AnalyticsPage() {
             Нет данных за период. Создайте tracking-ссылку и запустите трафик — данные появятся здесь.
           </Empty>
         ) : (
-          <div className="h-72">
+          <div
+            className="h-72"
+            role="img"
+            aria-label={`График динамики по дням, метрика: ${
+              { leads: 'лиды', payments: 'оплаты', revenue: 'выручка' }[metric]
+            }, ${
+              dimension === 'none'
+                ? 'без разреза'
+                : `разрез по ${{ source: 'источникам', campaign: 'кампаниям', product: 'продуктам' }[dimension]}`
+            }`}
+          >
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e4e4e7" />
@@ -356,7 +396,7 @@ export default function AnalyticsPage() {
                 <Th>{dimension === 'source' ? 'Источник' : dimension === 'campaign' ? 'Кампания' : dimension === 'product' ? 'Продукт' : '—'}</Th>
                 <Th>Лидов</Th>
                 <Th>Оплат</Th>
-                <Th>CVR</Th>
+                <Th><span title="Доля лидов, оплативших продукт">Конверсия</span></Th>
                 <Th>Выручка</Th>
               </TableHead>
               <tbody>
@@ -384,8 +424,8 @@ export default function AnalyticsPage() {
         <div className="p-4 sm:p-5 pb-2">
           <div className="text-sm font-semibold text-ink">Эффективность воронок</div>
           <div className="text-xs text-zinc-500">
-            Сколько юзеров вошло в воронку и сколько из них купили продукт.
-            Включает завершившие воронку + cancel-by-payment (это успех).
+            Сколько пользователей вошло в воронку и сколько из них купили продукт.
+            В «успех» засчитываются и те, кто прошёл воронку до конца, и те, кто оплатил во время её прохождения.
           </div>
         </div>
 
@@ -402,12 +442,12 @@ export default function AnalyticsPage() {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <div className="text-sm font-semibold text-ink truncate">{f.name}</div>
-                    {!f.is_active && <Pill color="gray">draft</Pill>}
+                    {!f.is_active && <Pill color="gray">черновик</Pill>}
                   </div>
                   <div className="text-xs text-zinc-500">
                     Вход <b className="text-ink">{f.entered}</b>
                     {' · '}успех <b className="text-ink">{f.successful_outcomes}</b>
-                    {' '}<span className="text-zinc-400">({f.completed} завершили + {f.cancelled_by_payment} купили во время)</span>
+                    {' '}<span className="text-zinc-400">({f.completed} завершили + {f.cancelled_by_payment} оплатили во время)</span>
                   </div>
                 </div>
                 <div className="text-right">
@@ -428,12 +468,20 @@ export default function AnalyticsPage() {
         )}
       </Card>
 
-      <div className="mt-5 text-xs text-zinc-500 max-w-3xl">
-        <b>Заметки:</b>{' '}
-        Last-touch — атрибуция на источник последней заявки юзера (TTL 30 мин с момента клика).
-        First-touch — на источник первого захода юзера в бота.
-        Cancelled by payment — воронка автоматически отменилась при оплате (это успех).
-        Тестовые прогоны исключены автоматически.
+      <div className="mt-5 text-xs text-zinc-500 max-w-3xl space-y-1">
+        <div><b>Как читать:</b></div>
+        <div>
+          <b>Последнее касание</b> — атрибуция на источник последней заявки пользователя
+          (учитывается клик за 30 минут до неё).
+        </div>
+        <div>
+          <b>Первое касание</b> — атрибуция на источник первого захода пользователя в бота.
+        </div>
+        <div>
+          <b>Оплачено во время воронки</b> — пользователь купил продукт, пока шла воронка;
+          она автоматически остановилась, и это засчитывается как успех.
+        </div>
+        <div>Тестовые прогоны исключены из данных автоматически.</div>
       </div>
     </div>
   );
