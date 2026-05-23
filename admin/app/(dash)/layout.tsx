@@ -86,6 +86,12 @@ const I = {
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
     </svg>
   ),
+  Chart: () => (
+    <svg className={baseIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 3v18h18" />
+      <path d="M7 14l4-4 4 4 5-7" />
+    </svg>
+  ),
   Chevron: () => (
     <svg className="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
       <path d="M6 9l6 6 6-6" />
@@ -140,6 +146,7 @@ const NAV_GROUPS: NavGroup[] = [
     key: 'analytics',
     label: 'Аналитика',
     items: [
+      { href: '/analytics', label: 'Эффективность', icon: <I.Chart /> },
       { href: '/sources', label: 'Источники', icon: <I.Source /> },
     ],
   },
@@ -497,6 +504,7 @@ function buildBreadcrumbs(pathname: string): Array<{ label: string; href?: strin
     payments: 'Платежи',
     subscriptions: 'Подписки',
     sources: 'Источники',
+    analytics: 'Эффективность',
     account: 'Профиль',
     funnels: 'Воронки',
     'lead-magnets': 'Лидмагниты',
