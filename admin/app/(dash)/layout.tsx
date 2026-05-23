@@ -295,11 +295,16 @@ export default function DashLayout({ children }: { children: ReactNode }) {
       {/* Header */}
       <div className="px-5 py-5 flex items-center gap-3 shrink-0">
         <Link href="/" className="flex items-center gap-3 hover:opacity-80 transition">
-          <div className="size-9 rounded-xl gradient-primary text-white font-bold flex items-center justify-center shadow-[0_8px_20px_-8px_rgba(124,58,237,0.6)]">
-            i
+          <div className="size-9 rounded-xl gradient-primary text-white flex items-center justify-center shadow-[0_8px_20px_-8px_rgba(124,58,237,0.6)]">
+            <svg viewBox="0 0 24 24" fill="none" className="size-5" aria-hidden>
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.2" opacity="0.9" />
+              <circle cx="12" cy="12" r="6.5" stroke="currentColor" strokeWidth="0.6" opacity="0.45" />
+              <circle cx="12" cy="12" r="3.2" fill="currentColor" />
+              <circle cx="12" cy="12" r="0.9" fill="#1e1b4b" />
+            </svg>
           </div>
           <div>
-            <div className="text-sm font-semibold tracking-tight">Infobizbot</div>
+            <div className="text-sm font-semibold tracking-tight">Grammy</div>
             <div className="text-[10px] uppercase tracking-widest text-zinc-500">admin</div>
           </div>
         </Link>

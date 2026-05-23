@@ -32,11 +32,16 @@ export default function LoginPage() {
     <main className="min-h-screen flex items-center justify-center p-4">
       <div className="w-full max-w-md anim-rise">
         <div className="mb-6 flex items-center justify-center gap-3">
-          <div className="size-11 rounded-2xl gradient-primary text-white font-bold flex items-center justify-center shadow-[0_12px_28px_-10px_rgba(124,58,237,0.55)]">
-            i
+          <div className="size-11 rounded-2xl gradient-primary text-white flex items-center justify-center shadow-[0_12px_28px_-10px_rgba(124,58,237,0.55)]">
+            <svg viewBox="0 0 24 24" fill="none" className="size-6" aria-hidden>
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.2" opacity="0.9" />
+              <circle cx="12" cy="12" r="6.5" stroke="currentColor" strokeWidth="0.6" opacity="0.45" />
+              <circle cx="12" cy="12" r="3.2" fill="currentColor" />
+              <circle cx="12" cy="12" r="0.9" fill="#1e1b4b" />
+            </svg>
           </div>
           <div>
-            <div className="text-2xl font-bold tracking-tight">Infobizbot</div>
+            <div className="text-2xl font-bold tracking-tight">Grammy</div>
             <div className="text-[11px] uppercase tracking-widest text-zinc-500">admin panel</div>
           </div>
         </div>

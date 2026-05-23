@@ -2,16 +2,61 @@ import './globals.css';
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 
+const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000';
+
 export const metadata: Metadata = {
-  title: 'Infobizbot — админ',
-  description: 'Управление Telegram‑ботом продажи доступа',
+  metadataBase: new URL(siteUrl),
+  title: {
+    default: 'Grammy — админ',
+    template: '%s · Grammy',
+  },
+  description:
+    'Админ-панель Telegram-бота продажи доступа: воронки, аналитика, платежи.',
+  applicationName: 'Grammy',
+  generator: 'Next.js',
+  referrer: 'strict-origin-when-cross-origin',
+  formatDetection: {
+    email: false,
+    address: false,
+    telephone: false,
+  },
+  robots: {
+    index: false,
+    follow: false,
+    nocache: true,
+    googleBot: {
+      index: false,
+      follow: false,
+      noimageindex: true,
+      'max-snippet': -1,
+      'max-image-preview': 'none',
+    },
+  },
+  openGraph: {
+    type: 'website',
+    locale: 'ru_RU',
+    siteName: 'Grammy',
+    title: 'Grammy — админ',
+    description:
+      'Админ-панель Telegram-бота продажи доступа: воронки, аналитика, платежи.',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Grammy — админ',
+    description:
+      'Админ-панель Telegram-бота продажи доступа: воронки, аналитика, платежи.',
+  },
 };
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover',
-  themeColor: '#f4f6fb',
+  colorScheme: 'light dark',
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#f4f6fb' },
+    { media: '(prefers-color-scheme: dark)', color: '#0f0a2e' },
+  ],
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
