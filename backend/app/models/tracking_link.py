@@ -30,6 +30,10 @@ class TrackingLink(Base):
     created_by: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("admins.id", ondelete="SET NULL"), nullable=True
     )
+    # Запускаемая воронка при /start <slug>
+    funnel_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("funnels.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

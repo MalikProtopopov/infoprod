@@ -8,6 +8,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from app.db.session import SessionLocal
 from app.services.subscriptions import expire_due
+from app.workers.scheduled_messages import process_due_messages
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,16 @@ async def _hourly_expire_due() -> None:
         logger.exception("hourly_expire_due failed: %s", e)
 
 
+async def _process_scheduled_messages() -> None:
+    try:
+        async with SessionLocal() as session:
+            stats = await process_due_messages(session)
+        if any(stats.values()):
+            logger.info("scheduled_messages tick: %s", stats)
+    except Exception as e:
+        logger.exception("scheduled_messages tick failed: %s", e)
+
+
 def start() -> None:
     global _scheduler
     if _scheduler is not None:
@@ -36,6 +47,14 @@ def start() -> None:
         max_instances=1,
         coalesce=True,
         next_run_time=datetime.now(tz=timezone.utc) + timedelta(seconds=60),
+    )
+    sch.add_job(
+        _process_scheduled_messages,
+        IntervalTrigger(minutes=5),
+        id="scheduled_messages",
+        max_instances=1,
+        coalesce=True,
+        next_run_time=datetime.now(tz=timezone.utc) + timedelta(seconds=30),
     )
     sch.start()
     _scheduler = sch

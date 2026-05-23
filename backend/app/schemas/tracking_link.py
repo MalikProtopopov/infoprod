@@ -14,6 +14,7 @@ class TrackingLinkCreate(BaseModel):
     utm_campaign: str | None = Field(default=None, max_length=255)
     utm_content: str | None = Field(default=None, max_length=255)
     bot_id: int | None = None
+    funnel_id: int | None = None
     notes: str | None = None
     custom_slug: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{4,64}$")
 
@@ -21,6 +22,7 @@ class TrackingLinkCreate(BaseModel):
 class TrackingLinkUpdate(BaseModel):
     notes: str | None = None
     is_active: bool | None = None
+    funnel_id: int | None = None
 
 
 class TrackingLinkProductRef(BaseModel):

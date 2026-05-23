@@ -169,6 +169,13 @@ async def create_tracking_link(
         if bot_exists is None:
             raise HTTPException(status_code=400, detail="Бот не найден")
 
+    # Если указан funnel_id — проверяем его существование
+    if payload.funnel_id is not None:
+        from app.models.funnel import Funnel
+        funnel = await session.get(Funnel, payload.funnel_id)
+        if funnel is None:
+            raise HTTPException(status_code=400, detail="Воронка не найдена")
+
     service = TrackingLinksService(session)
     try:
         link = await service.create(
@@ -181,6 +188,7 @@ async def create_tracking_link(
             notes=payload.notes,
             custom_slug=payload.custom_slug,
             created_by=admin.id,
+            funnel_id=payload.funnel_id,
         )
     except ConflictError as e:
         raise HTTPException(status_code=409, detail=str(e))
@@ -214,7 +222,14 @@ async def update_tracking_link(
     session: AsyncSession = Depends(get_session),
 ) -> TrackingLinkOut:
     service = TrackingLinksService(session)
-    link = await service.update(link_id, notes=payload.notes, is_active=payload.is_active)
+    data = payload.model_dump(exclude_unset=True)
+    link = await service.update(
+        link_id,
+        notes=payload.notes,
+        is_active=payload.is_active,
+        funnel_id=payload.funnel_id,
+        funnel_id_set="funnel_id" in data,
+    )
     if link is None:
         raise HTTPException(status_code=404, detail="Ссылка не найдена")
     await session.commit()

@@ -202,6 +202,17 @@ async def start_with_arg(m: Message, command: CommandObject, bot: Bot) -> None:
         if tracking_link:
             await _set_current_link(session, user.id, tracking_link.id)
 
+        # Шаг 4b: запуск воронки, если у tracking_link есть funnel_id
+        if tracking_link and tracking_link.funnel_id:
+            from app.services.funnels import FunnelsService
+            funnels = FunnelsService(session)
+            await funnels.start_for_user(
+                user_id=user.id,
+                funnel_id=tracking_link.funnel_id,
+                source="tracking_link",
+                source_ref=tracking_link.id,
+            )
+
         await session.commit()
 
         # Шаг 5: показать карточку / каталог / уведомление об устаревшей ссылке
@@ -331,10 +342,86 @@ async def cb_lead(cb: CallbackQuery) -> None:
             utm_campaign=tracking_link.utm_campaign if tracking_link else None,
         )
         session.add(lead)
+        await session.flush()
+
+        # NEW: автозапуск default-воронки продукта
+        if product.default_funnel_id:
+            from app.services.funnels import FunnelsService
+            funnels = FunnelsService(session)
+            await funnels.start_for_user(
+                user_id=user.id,
+                funnel_id=product.default_funnel_id,
+                source="lead_created",
+                source_ref=lead.id,
+            )
+
         await session.commit()
 
     await cb.message.answer(texts.LEAD_SENT)
     await cb.answer("Заявка отправлена")
+
+
+# ===================== Кодовые слова (текстовые сообщения) =====================
+
+@router.message(F.text & ~F.text.startswith("/"))
+async def on_text_message(m: Message, bot: Bot) -> None:
+    """Резолв кодовых слов перед обычной обработкой текстовых сообщений."""
+    text = (m.text or "").strip()
+    if not text or len(text) > 64:
+        return
+
+    async with SessionLocal() as session:
+        from app.services.funnel_triggers import FunnelTriggersService
+        from app.services.funnels import FunnelsService
+
+        triggers = FunnelTriggersService(session)
+        trigger = await triggers.find_by_word(text)
+        if trigger is None:
+            return  # не триггер — пропускаем (можно дальше передать менеджеру)
+
+        user, is_new = await _upsert_user(session, m)
+        if is_new:
+            our_bot_id = await _resolve_bot_id(session, bot)
+            await _set_first_touch(
+                session, user_id=user.id, bot_id=our_bot_id,
+                product_id=None, tracking_link=None,
+            )
+
+        funnels = FunnelsService(session)
+        existing = await funnels.find_active_entry(
+            user_id=user.id, funnel_id=trigger.funnel_id,
+        )
+        if existing is None:
+            await funnels.start_for_user(
+                user_id=user.id,
+                funnel_id=trigger.funnel_id,
+                source="code_word",
+                source_ref=trigger.id,
+            )
+            await triggers.increment_use_count(trigger.id)
+        await session.commit()
+
+    await m.answer(texts.CODE_WORD_ACCEPTED)
+
+
+# ===================== Отписка от напоминаний =====================
+
+@router.callback_query(F.data == "unsubscribe_notifications")
+async def cb_unsubscribe(cb: CallbackQuery) -> None:
+    async with SessionLocal() as session:
+        user = (
+            await session.execute(
+                select(User).where(User.telegram_user_id == cb.from_user.id)
+            )
+        ).scalar_one_or_none()
+        if user is None:
+            await cb.answer()
+            return
+        user.notifications_enabled = False
+        await session.commit()
+
+    await cb.message.answer(texts.UNSUBSCRIBED)
+    await cb.answer()
 
 
 def build_dispatcher() -> Dispatcher:

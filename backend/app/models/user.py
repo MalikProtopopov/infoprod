@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -42,3 +42,7 @@ class User(Base):
         BigInteger, ForeignKey("tracking_links.id", ondelete="SET NULL"), nullable=True
     )
     current_link_set_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # --- модуль воронок ---
+    # Глобальный флаг получения follow-up сообщений
+    notifications_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

@@ -138,6 +138,13 @@ async def create_payment(
         if last_lead.paid_at is None:
             last_lead.paid_at = datetime.now(tz=timezone.utc)
 
+    # NEW: автоотмена активных воронок на этот продукт
+    from app.services.funnels import FunnelsService
+    funnels_svc = FunnelsService(session)
+    await funnels_svc.cancel_entries_for_user_on_payment(
+        user_id=user.id, product_id=product.id,
+    )
+
     await session.commit()
     await session.refresh(payment)
 

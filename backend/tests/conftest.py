@@ -187,6 +187,12 @@ def factories(session: AsyncSession):
         f.PaymentFactory,
         f.SubscriptionFactory,
         f.TrackingLinkFactory,
+        f.FunnelFactory,
+        f.FunnelStepFactory,
+        f.FunnelEntryFactory,
+        f.FunnelTriggerFactory,
+        f.LeadMagnetFactory,
+        f.ScheduledMessageFactory,
     ):
         factory_cls._meta.sqlalchemy_session = session
     return f
@@ -249,6 +255,36 @@ async def make(session: AsyncSession, factories):
                 kw["product"] = await self.product()
             obj = factories.TrackingLink(**kw); session.add(obj); await session.flush(); return obj
 
+        async def lead_magnet(self, **kw):
+            obj = factories.LeadMagnet(**kw); session.add(obj); await session.flush(); return obj
+
+        async def funnel(self, **kw):
+            if "product" not in kw and "product_id" not in kw:
+                kw["product"] = await self.product()
+            obj = factories.Funnel(**kw); session.add(obj); await session.flush(); return obj
+
+        async def funnel_step(self, **kw):
+            if "funnel" not in kw and "funnel_id" not in kw:
+                kw["funnel"] = await self.funnel()
+            obj = factories.FunnelStep(**kw); session.add(obj); await session.flush(); return obj
+
+        async def funnel_entry(self, **kw):
+            if "user" not in kw and "user_id" not in kw:
+                kw["user"] = await self.user()
+            if "funnel" not in kw and "funnel_id" not in kw:
+                kw["funnel"] = await self.funnel()
+            obj = factories.FunnelEntry(**kw); session.add(obj); await session.flush(); return obj
+
+        async def funnel_trigger(self, **kw):
+            if "funnel" not in kw and "funnel_id" not in kw:
+                kw["funnel"] = await self.funnel()
+            obj = factories.FunnelTrigger(**kw); session.add(obj); await session.flush(); return obj
+
+        async def scheduled_message(self, **kw):
+            if "user" not in kw and "user_id" not in kw:
+                kw["user"] = await self.user()
+            obj = factories.ScheduledMessage(**kw); session.add(obj); await session.flush(); return obj
+
     return _Make()
 
 
@@ -269,7 +305,10 @@ async def make_committed(engine: AsyncEngine):
             # Привязываем фабрики к этой сессии
             for fc in (f.AdminFactory, f.BotFactory, f.ChannelFactory, f.ProductFactory,
                        f.UserFactory, f.LeadFactory, f.PaymentFactory,
-                       f.SubscriptionFactory, f.TrackingLinkFactory):
+                       f.SubscriptionFactory, f.TrackingLinkFactory,
+                       f.FunnelFactory, f.FunnelStepFactory, f.FunnelEntryFactory,
+                       f.FunnelTriggerFactory, f.LeadMagnetFactory,
+                       f.ScheduledMessageFactory):
                 fc._meta.sqlalchemy_session = s
             obj = factory_cls(**kw)
             s.add(obj)
@@ -322,6 +361,36 @@ async def make_committed(engine: AsyncEngine):
             if "product" not in kw and "product_id" not in kw:
                 kw["product"] = await self.product()
             return await _save(f.TrackingLinkFactory, **kw)
+
+        async def lead_magnet(self, **kw):
+            return await _save(f.LeadMagnetFactory, **kw)
+
+        async def funnel(self, **kw):
+            if "product" not in kw and "product_id" not in kw:
+                kw["product"] = await self.product()
+            return await _save(f.FunnelFactory, **kw)
+
+        async def funnel_step(self, **kw):
+            if "funnel" not in kw and "funnel_id" not in kw:
+                kw["funnel"] = await self.funnel()
+            return await _save(f.FunnelStepFactory, **kw)
+
+        async def funnel_entry(self, **kw):
+            if "user" not in kw and "user_id" not in kw:
+                kw["user"] = await self.user()
+            if "funnel" not in kw and "funnel_id" not in kw:
+                kw["funnel"] = await self.funnel()
+            return await _save(f.FunnelEntryFactory, **kw)
+
+        async def funnel_trigger(self, **kw):
+            if "funnel" not in kw and "funnel_id" not in kw:
+                kw["funnel"] = await self.funnel()
+            return await _save(f.FunnelTriggerFactory, **kw)
+
+        async def scheduled_message(self, **kw):
+            if "user" not in kw and "user_id" not in kw:
+                kw["user"] = await self.user()
+            return await _save(f.ScheduledMessageFactory, **kw)
 
     return _Committed()
 

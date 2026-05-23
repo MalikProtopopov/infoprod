@@ -166,6 +166,109 @@ class TrackingLinkFactory(_Base):
     unique_users = 0
 
 
+# ─── Funnels module ───
+
+from app.models.funnel import Funnel as _Funnel
+from app.models.funnel_step import FunnelStep as _FunnelStep
+from app.models.funnel_entry import FunnelEntry as _FunnelEntry
+from app.models.funnel_trigger import FunnelTrigger as _FunnelTrigger
+from app.models.lead_magnet import LeadMagnet as _LeadMagnet
+from app.models.scheduled_message import ScheduledMessage as _ScheduledMessage
+
+
+class LeadMagnetFactory(_Base):
+    class Meta:
+        model = _LeadMagnet
+        exclude = ("product",)
+
+    name = factory.Sequence(lambda n: f"Lead Magnet {n}")
+    description = None
+    file_url = factory.Sequence(lambda n: f"/tmp/test_lm_{n}.pdf")
+    file_type = "pdf"
+    file_size = 1024
+    telegram_file_id = None
+    product = None
+    product_id = factory.LazyAttribute(lambda o: o.product.id if o.product else None)
+    is_active = True
+    download_count = 0
+
+
+class FunnelFactory(_Base):
+    class Meta:
+        model = _Funnel
+        exclude = ("product",)
+
+    name = factory.Sequence(lambda n: f"Funnel {n}")
+    description = None
+    product = factory.SubFactory(ProductFactory)
+    product_id = factory.LazyAttribute(lambda o: o.product.id)
+    bot_id = None
+    is_active = True
+    ttl_days = 90
+    cancel_on_payment = True
+
+
+class FunnelStepFactory(_Base):
+    class Meta:
+        model = _FunnelStep
+        exclude = ("funnel",)
+
+    funnel = factory.SubFactory(FunnelFactory)
+    funnel_id = factory.LazyAttribute(lambda o: o.funnel.id)
+    order_idx = factory.Sequence(lambda n: n)
+    delay_minutes = 0
+    message_text = "Default step text"
+    parse_mode = "HTML"
+    lead_magnet_id = None
+    buttons = None
+    is_active = True
+
+
+class FunnelEntryFactory(_Base):
+    class Meta:
+        model = _FunnelEntry
+        exclude = ("funnel", "user")
+
+    funnel = factory.SubFactory(FunnelFactory)
+    user = factory.SubFactory(UserFactory)
+    funnel_id = factory.LazyAttribute(lambda o: o.funnel.id)
+    user_id = factory.LazyAttribute(lambda o: o.user.id)
+    source = "manual"
+    source_ref = None
+    status = "active"
+
+
+class FunnelTriggerFactory(_Base):
+    class Meta:
+        model = _FunnelTrigger
+        exclude = ("funnel",)
+
+    funnel = factory.SubFactory(FunnelFactory)
+    funnel_id = factory.LazyAttribute(lambda o: o.funnel.id)
+    word = factory.Sequence(lambda n: f"trigger{n}")
+    is_active = True
+    use_count = 0
+
+
+class ScheduledMessageFactory(_Base):
+    class Meta:
+        model = _ScheduledMessage
+        exclude = ("user", "entry", "step")
+
+    user = factory.SubFactory(UserFactory)
+    entry = None
+    step = None
+    user_id = factory.LazyAttribute(lambda o: o.user.id)
+    funnel_entry_id = factory.LazyAttribute(lambda o: o.entry.id if o.entry else None)
+    funnel_step_id = factory.LazyAttribute(lambda o: o.step.id if o.step else None)
+    template_key = None
+    payload = None
+    scheduled_at = factory.LazyFunction(_now)
+    sent_at = None
+    cancelled_at = None
+    attempts = 0
+
+
 # Short aliases
 User = UserFactory
 Bot = BotFactory
@@ -176,3 +279,9 @@ Lead = LeadFactory
 Payment = PaymentFactory
 Subscription = SubscriptionFactory
 TrackingLink = TrackingLinkFactory
+Funnel = FunnelFactory
+FunnelStep = FunnelStepFactory
+FunnelEntry = FunnelEntryFactory
+FunnelTrigger = FunnelTriggerFactory
+LeadMagnet = LeadMagnetFactory
+ScheduledMessage = ScheduledMessageFactory

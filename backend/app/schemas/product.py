@@ -30,6 +30,7 @@ class ProductUpdate(BaseModel):
     price_12m: Decimal | None = None
     currency: str | None = None
     is_active: bool | None = None
+    default_funnel_id: int | None = None
 
 
 class ProductOut(BaseModel):
@@ -45,6 +46,7 @@ class ProductOut(BaseModel):
     price_12m: Decimal
     currency: str
     is_active: bool
+    default_funnel_id: int | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

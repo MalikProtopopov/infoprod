@@ -7,3 +7,9 @@ from app.models.user import User  # noqa: F401
 from app.models.lead import Lead  # noqa: F401
 from app.models.payment import Payment  # noqa: F401
 from app.models.subscription import Subscription  # noqa: F401
+from app.models.lead_magnet import LeadMagnet  # noqa: F401
+from app.models.funnel import Funnel  # noqa: F401
+from app.models.funnel_step import FunnelStep  # noqa: F401
+from app.models.funnel_entry import FunnelEntry  # noqa: F401
+from app.models.funnel_trigger import FunnelTrigger  # noqa: F401
+from app.models.scheduled_message import ScheduledMessage  # noqa: F401

@@ -29,6 +29,13 @@ PRODUCT_NOT_FOUND = "Этот продукт сейчас недоступен."
 
 LINK_EXPIRED_OR_INVALID = "Эта ссылка устарела или недоступна. Посмотрите наш каталог ниже."
 
+CODE_WORD_ACCEPTED = "Принято, сейчас пришлю материалы."
+
+UNSUBSCRIBED = (
+    "Хорошо, больше не буду присылать напоминания. "
+    "Если что — напишите /start, всё снова заработает."
+)
+
 
 def product_card(name: str, description: str | None, price_3m, price_6m, price_12m, currency: str) -> str:
     desc = (description or "").strip()

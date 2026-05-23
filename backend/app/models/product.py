@@ -27,6 +27,10 @@ class Product(Base):
     price_12m: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(8), default="RUB", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Воронка, запускаемая автоматически при создании лида на этот продукт
+    default_funnel_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("funnels.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     channel: Mapped["Channel"] = relationship(back_populates="products")

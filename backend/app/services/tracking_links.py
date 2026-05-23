@@ -71,6 +71,7 @@ class TrackingLinksService:
         notes: str | None = None,
         custom_slug: str | None = None,
         created_by: int | None = None,
+        funnel_id: int | None = None,
     ) -> TrackingLink:
         # Резолвим bot_id: если не указан явно — берём через канал продукта
         if bot_id is None:
@@ -110,6 +111,7 @@ class TrackingLinksService:
             click_count=0,
             unique_users=0,
             created_by=created_by,
+            funnel_id=funnel_id,
         )
         self.session.add(link)
         await self.session.flush()
@@ -159,7 +161,11 @@ class TrackingLinksService:
         )
 
     async def update(
-        self, link_id: int, *, notes: str | None = None, is_active: bool | None = None
+        self, link_id: int, *,
+        notes: str | None = None,
+        is_active: bool | None = None,
+        funnel_id: int | None = None,
+        funnel_id_set: bool = False,  # явный флаг чтобы можно было обнулить через None
     ) -> TrackingLink | None:
         link = await self.session.get(TrackingLink, link_id)
         if link is None:
@@ -168,6 +174,8 @@ class TrackingLinksService:
             link.notes = notes
         if is_active is not None:
             link.is_active = is_active
+        if funnel_id_set:
+            link.funnel_id = funnel_id
         await self.session.flush()
         return link
 
