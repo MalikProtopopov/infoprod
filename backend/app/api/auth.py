@@ -77,7 +77,7 @@ async def logout(response: Response, _: Admin = Depends(current_admin)) -> dict:
 
 @router.get("/me", response_model=AdminInfo)
 async def me(admin: Admin = Depends(current_admin)) -> AdminInfo:
-    return AdminInfo(id=admin.id, username=admin.username)
+    return AdminInfo(id=admin.id, username=admin.username, role=admin.role or "admin")
 
 
 admin_router = APIRouter(prefix="/admin", tags=["admin"])

@@ -21,3 +21,4 @@ class PasswordChangeRequest(BaseModel):
 class AdminInfo(BaseModel):
     id: int
     username: str
+    role: str = "admin"
