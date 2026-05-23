@@ -39,7 +39,11 @@ async def overview(
 
     total_leads = await scalar(select(func.count()).select_from(Lead))
     new_leads = await scalar(select(func.count()).select_from(Lead).where(Lead.status == "new"))
-    leads_24h = await scalar(select(func.count()).select_from(Lead).where(Lead.created_at >= day_ago))
+    # last_24h — все поступившие за сутки (поток), безотносительно к их сегодняшнему статусу.
+    # Это метрика активности, а не "висящих" заявок (для висящих — new_leads).
+    leads_24h = await scalar(
+        select(func.count()).select_from(Lead).where(Lead.created_at >= day_ago)
+    )
 
     active_subs = await scalar(
         select(func.count()).select_from(Subscription).where(Subscription.status == "active")
@@ -246,15 +250,15 @@ async def stats_sources(
         else:
             g["meta"] = {"source": src or None}
 
+    # Индексация по link_id: O(1) lookup вместо O(N) поиска в цикле.
+    # Защищает /sources от O(N×M) при росте числа ссылок.
+    link_by_id: dict[int, tuple] = {r[0]: r for r in link_rows}
+
     # leads
     for tl_id, src, med, camp, cnt in lead_rows:
-        # для группировки по link нужно знать slug — но у leads его нет, придётся join'нуть
         slug = None
-        if tl_id is not None:
-            for r in link_rows:
-                if r[0] == tl_id:
-                    slug = r[1]
-                    break
+        if tl_id is not None and tl_id in link_by_id:
+            slug = link_by_id[tl_id][1]
         if tl_id is None and group_by == "link":
             # Лиды без атрибуции — отдельная группа "органика"
             key = ("link", None, None, None, None, None)
@@ -280,11 +284,8 @@ async def stats_sources(
     for tl_id, (pcnt, prevenue) in pay_by_link.items():
         slug = None
         src = med = camp = None
-        if tl_id is not None:
-            for r in link_rows:
-                if r[0] == tl_id:
-                    _, slug, src, med, camp, _, _ = r
-                    break
+        if tl_id is not None and tl_id in link_by_id:
+            _, slug, src, med, camp, _, _ = link_by_id[tl_id]
         key = _key(tl_id, src, med, camp, slug)
         g = groups.setdefault(key, _empty_group())
         g["payments"] += pcnt

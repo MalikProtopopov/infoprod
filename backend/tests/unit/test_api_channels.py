@@ -147,3 +147,17 @@ async def test_list_channels_includes_counts(admin_client, make_committed, clean
     assert len(rows) == 1
     assert rows[0]["products_count"] == 2
     assert rows[0]["active_subs_count"] == 1  # только active считаются
+
+
+@pytest.mark.asyncio
+async def test_list_channels_products_count_filters_inactive(admin_client, make_committed, clean_db):
+    """products_count должен считать только активные продукты — согласованно с active_subs_count."""
+    channel = await make_committed.channel()
+    await make_committed.product(channel=channel)  # активный
+    await make_committed.product(channel=channel)  # активный
+    await make_committed.product(channel=channel, is_active=False)  # неактивный — не должен попасть
+
+    r = await admin_client.get("/api/channels")
+    assert r.status_code == 200
+    rows = r.json()
+    assert rows[0]["products_count"] == 2  # 3-й (inactive) не учитывается

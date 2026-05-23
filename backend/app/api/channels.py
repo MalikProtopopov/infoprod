@@ -48,10 +48,12 @@ async def list_channels(_: Admin = Depends(current_admin), session: AsyncSession
     if not rows:
         return []
     channel_ids = [ch.id for ch, _ in rows]
+    # products_count показываем согласованно с active_subs_count — только активные продукты,
+    # иначе UI противоречит сам себе: «3 продукта · 0 активных подписок» при том, что 2 из 3 — drafts.
     prod_counts_rows = (
         await session.execute(
             select(Product.channel_id, func.count(Product.id))
-            .where(Product.channel_id.in_(channel_ids))
+            .where(Product.channel_id.in_(channel_ids), Product.is_active.is_(True))
             .group_by(Product.channel_id)
         )
     ).all()

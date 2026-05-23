@@ -90,7 +90,12 @@ export default function DashboardPage() {
             <Stat
               label="Оборот за 30 дней"
               value={fmtMoney(data.revenue.last_30d)}
-              hint={`Платежей: ${data.revenue.payments_30d} · Всего: ${fmtMoney(data.revenue.total)}`}
+              hint={(() => {
+                const n = data.revenue.payments_30d;
+                const sum30 = Number(data.revenue.last_30d) || 0;
+                const avg = n > 0 ? sum30 / n : 0;
+                return `Платежей: ${n}${avg ? ` · ср.чек ${fmtMoney(avg)}` : ''}`;
+              })()}
               accent="teal"
               icon={
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">

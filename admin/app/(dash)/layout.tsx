@@ -220,9 +220,11 @@ export default function DashLayout({ children }: { children: ReactNode }) {
   const counts: NavCounts = useMemo(() => ({
     newLeads: overview?.leads?.new || 0,
     expiringSubs: overview?.subscriptions?.expiring_7d || 0,
-    funnelsTodo: (funnels || []).filter((f) => !f.is_active && f.steps_count > 0).length
-      // плюс воронки активные с steps=0 = тоже undone
-      + (funnels || []).filter((f) => f.steps_count === 0).length,
+    // "Требует внимания" = пустая воронка (без шагов) ИЛИ готовый черновик без публикации.
+    // Активная воронка с шагами — всё на месте, в badge не попадает.
+    funnelsTodo: (funnels || []).filter(
+      (f) => f.steps_count === 0 || (!f.is_active && f.steps_count > 0),
+    ).length,
   }), [overview, funnels]);
 
   useEffect(() => {

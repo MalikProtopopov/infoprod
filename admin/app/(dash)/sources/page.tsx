@@ -109,16 +109,21 @@ export default function SourcesPage() {
 
   function downloadCsv() {
     if (!data) return;
-    const headers = ['key', 'clicks', 'unique', 'leads', 'payments', 'revenue', 'conv_c_to_l', 'conv_l_to_p', 'avg_check'];
+    // CSV единицы должны совпадать с UI: проценты — в процентах (5.0, не 0.05),
+    // revenue — как число (1500.50, не "1500.50" в кавычках).
+    const headers = ['key', 'clicks', 'unique', 'leads', 'payments', 'revenue', 'conv_c_to_l_pct', 'conv_l_to_p_pct', 'avg_check'];
     const lines = [headers.join(',')];
     for (const r of rows) {
       const key = group === 'link' ? (r.slug ?? '—')
                 : group === 'campaign' ? `${r.source ?? '—'} / ${r.campaign ?? '—'}`
                 : (r.source ?? '—');
+      const revNum = Number(r.revenue) || 0;
       lines.push([
         JSON.stringify(key),
-        r.clicks, r.unique_users, r.leads, r.payments, r.revenue,
-        r.conv_click_to_lead.toFixed(4), r.conv_lead_to_payment.toFixed(4), r.avg_check.toFixed(2),
+        r.clicks, r.unique_users, r.leads, r.payments, revNum.toFixed(2),
+        (r.conv_click_to_lead * 100).toFixed(2),
+        (r.conv_lead_to_payment * 100).toFixed(2),
+        r.avg_check.toFixed(2),
       ].join(','));
     }
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
