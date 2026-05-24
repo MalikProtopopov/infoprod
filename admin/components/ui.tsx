@@ -117,8 +117,15 @@ export function PlainCard({ children, className }: { children: ReactNode; classN
 }
 
 /* ---------- Table-wrap ---------- */
+// overflow-x-auto оставляем для горизонтального скролла на mobile,
+// overflow-y-hidden обрезает hover-фон строк по углам, чтобы они не торчали
+// за пределы скруглённой Card. rounded-[inherit] наследует радиус от Card.
 export function TableWrap({ children }: { children: ReactNode }) {
-  return <div className="overflow-x-auto">{children}</div>;
+  return (
+    <div className="overflow-x-auto overflow-y-hidden rounded-[inherit]">
+      {children}
+    </div>
+  );
 }
 
 /* ---------- Page header ---------- */
