@@ -276,6 +276,18 @@ export function StepMediaPanel({ stepId }: { stepId: number }) {
                         alt=""
                         className="size-16 rounded-lg object-cover bg-zinc-100"
                       />
+                    ) : isVideo && m.has_thumbnail ? (
+                      <div className="relative size-16 rounded-lg overflow-hidden bg-zinc-900">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={`/api/funnel-step-media/${m.id}/thumbnail`}
+                          alt=""
+                          className="size-16 object-cover"
+                        />
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                          <span className="text-white text-lg drop-shadow">▶</span>
+                        </div>
+                      </div>
                     ) : isVideo ? (
                       <div className="size-16 rounded-lg bg-zinc-900 flex items-center justify-center text-white text-xl">
                         ▶

@@ -184,6 +184,25 @@ async def get_step_media_file(
     )
 
 
+@router.get("/funnel-step-media/{media_id}/thumbnail")
+async def get_step_media_thumbnail(
+    media_id: int,
+    _: Admin = Depends(current_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    """Отдаёт превью-кадр видео (генерируется async-задачей при upload).
+
+    Если thumbnail ещё не сгенерирован или видео — не видео, отвечает 404.
+    Фронт должен фолбэкать на «▶» иконку.
+    """
+    media = await session.get(FunnelStepMedia, media_id)
+    if media is None:
+        raise HTTPException(status_code=404, detail="Step media not found")
+    if not media.thumbnail_path or not os.path.exists(media.thumbnail_path):
+        raise HTTPException(status_code=404, detail="Thumbnail not ready")
+    return FileResponse(media.thumbnail_path, media_type="image/jpeg")
+
+
 @router.delete(
     "/funnel-step-media/{media_id}",
     status_code=204,

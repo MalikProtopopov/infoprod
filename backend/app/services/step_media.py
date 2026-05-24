@@ -163,6 +163,17 @@ class StepMediaService:
             size=file_size,
             order_idx=order_idx,
         )
+
+        # Для видео — async-генерация thumbnail (ffmpeg в Docker image).
+        # Fire-and-forget: не блокируем upload response, ошибки не падают
+        # вверх — фронт фолбэкает на «▶» иконку если thumbnail не появится.
+        if media_type == "video":
+            try:
+                from app.workers.thumbnails import enqueue_video_thumbnail
+                enqueue_video_thumbnail(media.id)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("step_media.thumbnail_enqueue_failed", error=str(e))
+
         return media
 
     async def update_caption(self, media_id: int, caption: str | None) -> FunnelStepMedia | None:
