@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.funnel import Funnel
 from app.models.funnel_entry import FunnelEntry
 from app.models.funnel_step import FunnelStep
+from app.models.funnel_step_media import FunnelStepMedia
 from app.models.scheduled_message import ScheduledMessage
 from app.models.user import User
 
@@ -84,6 +85,142 @@ async def _mark_failed(session: AsyncSession, msg_id: int, error: str) -> None:
         .where(ScheduledMessage.id == msg_id)
         .values(error=error[:1000], attempts=ScheduledMessage.attempts + 1)
     )
+
+
+def _media_input(media: FunnelStepMedia):
+    """Возвращает аргумент для aiogram: telegram_file_id (str) если есть кэш,
+    иначе FSInputFile с диска."""
+    from aiogram.types import FSInputFile
+    if media.telegram_file_id:
+        return media.telegram_file_id
+    return FSInputFile(media.storage_path, filename=media.original_filename or None)
+
+
+def _extract_file_id(message, media_type: str) -> str | None:
+    """Извлекает file_id из ответа Telegram по типу медиа."""
+    if media_type == "photo":
+        photos = getattr(message, "photo", None)
+        if photos:
+            return photos[-1].file_id
+    if media_type == "video":
+        v = getattr(message, "video", None)
+        if v:
+            return v.file_id
+    if media_type == "animation":
+        a = getattr(message, "animation", None)
+        if a:
+            return a.file_id
+    if media_type == "audio":
+        au = getattr(message, "audio", None)
+        if au:
+            return au.file_id
+    if media_type == "voice":
+        vo = getattr(message, "voice", None)
+        if vo:
+            return vo.file_id
+    doc = getattr(message, "document", None)
+    if doc:
+        return doc.file_id
+    return None
+
+
+async def _persist_file_id(session: AsyncSession, media_id: int, file_id: str | None) -> None:
+    if not file_id:
+        return
+    await session.execute(
+        update(FunnelStepMedia)
+        .where(FunnelStepMedia.id == media_id, FunnelStepMedia.telegram_file_id.is_(None))
+        .values(telegram_file_id=file_id)
+    )
+
+
+async def _send_single_media(
+    aio_bot,
+    chat_id: int,
+    media: FunnelStepMedia,
+    text: str,
+    keyboard,
+    parse_mode: str | None,
+    session: AsyncSession,
+) -> None:
+    """Отправляет один файл с текстом-caption и inline-кнопками."""
+    src = _media_input(media)
+    caption = text  # текст шага идёт как caption
+    sent = None
+    if media.media_type == "photo":
+        sent = await aio_bot.send_photo(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=keyboard)
+    elif media.media_type == "video":
+        sent = await aio_bot.send_video(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=keyboard)
+    elif media.media_type == "animation":
+        sent = await aio_bot.send_animation(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=keyboard)
+    elif media.media_type == "audio":
+        sent = await aio_bot.send_audio(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=keyboard)
+    elif media.media_type == "voice":
+        # voice не поддерживает caption и parse_mode — шлём текст отдельным сообщением.
+        await aio_bot.send_message(chat_id, text, parse_mode=parse_mode, reply_markup=keyboard,
+                                   disable_web_page_preview=True)
+        sent = await aio_bot.send_voice(chat_id, src)
+    else:  # document
+        sent = await aio_bot.send_document(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=keyboard)
+
+    fid = _extract_file_id(sent, media.media_type) if sent else None
+    await _persist_file_id(session, media.id, fid)
+
+
+async def _send_media_group_then_text(
+    aio_bot,
+    chat_id: int,
+    media_rows: list[FunnelStepMedia],
+    text: str,
+    keyboard,
+    parse_mode: str | None,
+    session: AsyncSession,
+) -> None:
+    """Шлёт media-group без подписи, потом отдельное text-сообщение с кнопками.
+
+    Текст не помещаем в caption media-group, потому что:
+    1. Caption ограничен 1024 символами (text может быть до 4096).
+    2. Кнопки невозможно прикрепить к media-group.
+    Шлём текст ОТДЕЛЬНЫМ сообщением после альбома — пользователь видит
+    стопку медиа, под ней свежее сообщение с кнопками.
+    """
+    from aiogram.types import (
+        InputMediaAnimation,
+        InputMediaAudio,
+        InputMediaDocument,
+        InputMediaPhoto,
+        InputMediaVideo,
+    )
+
+    items = []
+    for m in media_rows:
+        src = _media_input(m)
+        cap = m.caption  # per-item caption
+        if m.media_type == "photo":
+            items.append(InputMediaPhoto(media=src, caption=cap, parse_mode=parse_mode if cap else None))
+        elif m.media_type == "video":
+            items.append(InputMediaVideo(media=src, caption=cap, parse_mode=parse_mode if cap else None))
+        elif m.media_type == "animation":
+            items.append(InputMediaAnimation(media=src, caption=cap, parse_mode=parse_mode if cap else None))
+        elif m.media_type == "audio":
+            items.append(InputMediaAudio(media=src, caption=cap, parse_mode=parse_mode if cap else None))
+        else:  # document / voice (voice не входит в group по спеке TG, но fallback на document)
+            items.append(InputMediaDocument(media=src, caption=cap, parse_mode=parse_mode if cap else None))
+
+    sent_messages = await aio_bot.send_media_group(chat_id, media=items)
+    # Сохраняем file_id для каждого ответа
+    for media_row, sent in zip(media_rows, sent_messages):
+        fid = _extract_file_id(sent, media_row.media_type)
+        await _persist_file_id(session, media_row.id, fid)
+
+    # Текст + кнопки — отдельным сообщением
+    if text or keyboard:
+        await aio_bot.send_message(
+            chat_id, text,
+            parse_mode=parse_mode,
+            reply_markup=keyboard,
+            disable_web_page_preview=True,
+        )
 
 
 async def process_due_messages(session: AsyncSession) -> dict[str, int]:
@@ -170,20 +307,43 @@ async def process_due_messages(session: AsyncSession) -> dict[str, int]:
 
             text = _render_template(step.message_text, user)
             keyboard = _build_keyboard(step.buttons)
+            parse_mode = step.parse_mode or "HTML"
 
-            await aio_bot.send_message(
-                user.telegram_user_id, text,
-                parse_mode=step.parse_mode or "HTML",
-                reply_markup=keyboard,
-                disable_web_page_preview=True,
-            )
+            # Загружаем медиа шага. Если их 0 — старая логика (текст +
+            # опц. legacy lead_magnet). Если 1 — одиночное медиа с
+            # caption+кнопками. Если ≥2 — media-group, потом отдельное
+            # text-сообщение с кнопками (caption у media-group лимит 1024
+            # символа, кнопки к media-group вообще нельзя).
+            step_media = (
+                await session.execute(
+                    select(FunnelStepMedia)
+                    .where(FunnelStepMedia.funnel_step_id == step.id)
+                    .order_by(FunnelStepMedia.order_idx)
+                )
+            ).scalars().all()
 
-            # Лидмагнит — отдельным сообщением
-            if step.lead_magnet_id:
-                await lm_svc.send_to_user(
-                    bot=aio_bot,
-                    user_telegram_id=user.telegram_user_id,
-                    lead_magnet_id=step.lead_magnet_id,
+            if not step_media:
+                await aio_bot.send_message(
+                    user.telegram_user_id, text,
+                    parse_mode=parse_mode,
+                    reply_markup=keyboard,
+                    disable_web_page_preview=True,
+                )
+                if step.lead_magnet_id:
+                    await lm_svc.send_to_user(
+                        bot=aio_bot,
+                        user_telegram_id=user.telegram_user_id,
+                        lead_magnet_id=step.lead_magnet_id,
+                    )
+            elif len(step_media) == 1:
+                await _send_single_media(
+                    aio_bot, user.telegram_user_id, step_media[0],
+                    text, keyboard, parse_mode, session,
+                )
+            else:
+                await _send_media_group_then_text(
+                    aio_bot, user.telegram_user_id, list(step_media),
+                    text, keyboard, parse_mode, session,
                 )
 
             await _mark_sent(session, msg.id)

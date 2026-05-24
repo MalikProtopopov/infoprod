@@ -16,6 +16,22 @@ class FunnelStepIn(BaseModel):
     is_active: bool = True
 
 
+class StepMediaBrief(BaseModel):
+    """Краткая инфо о медиа шага — для отображения в студии. Полные данные
+    выдаёт отдельный endpoint /funnel-steps/{id}/media."""
+    id: int
+    media_type: str
+    mime_type: str
+    file_size: int
+    order_idx: int
+    has_telegram_file_id: bool
+    has_thumbnail: bool
+    original_filename: str | None = None
+    caption: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class FunnelStepOut(BaseModel):
     id: int
     funnel_id: int
@@ -26,6 +42,7 @@ class FunnelStepOut(BaseModel):
     lead_magnet_id: int | None
     buttons: list[list[dict[str, Any]]] | None
     is_active: bool
+    media: list[StepMediaBrief] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 

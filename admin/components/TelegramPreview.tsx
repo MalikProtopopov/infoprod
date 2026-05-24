@@ -19,18 +19,28 @@ type LeadMagnetPreview = { name: string; file_type: string; size?: number | null
 type Btn = { text: string; url?: string; callback_data?: string };
 type ButtonRows = Btn[][];
 
+type StepMediaForPreview = {
+  id: number;
+  media_type: 'photo' | 'video' | 'animation' | 'audio' | 'document' | 'voice';
+  original_filename: string | null;
+  caption: string | null;
+  file_size: number;
+};
+
 export function TelegramPreview({
   text,
   leadMagnet,
   buttons,
   botUsername,
   previewName = 'Иван',
+  stepMedia,
 }: {
   text: string;
   leadMagnet?: LeadMagnetPreview | null;
   buttons?: ButtonRows | null;
   botUsername?: string;
   previewName?: string;
+  stepMedia?: StepMediaForPreview[];
 }) {
   const rendered = useMemo(() => renderHtml(text, previewName), [text, previewName]);
 
@@ -51,6 +61,12 @@ export function TelegramPreview({
 
       {/* Bubble: текст */}
       <div className="space-y-2">
+        {/* Step media — рендерится первым: 1 медиа = превью + caption,
+            ≥2 = grid-альбом, после альбома — текст-сообщение отдельным bubble */}
+        {stepMedia && stepMedia.length > 0 && (
+          <MediaGroupBubble items={stepMedia} />
+        )}
+
         <div className="bg-white rounded-2xl rounded-tl-md p-3 max-w-[88%] shadow-soft">
           <div
             className="tg-message text-[13.5px] leading-snug text-ink whitespace-pre-wrap break-words"
@@ -58,8 +74,8 @@ export function TelegramPreview({
           />
         </div>
 
-        {/* Lead magnet attachment */}
-        {leadMagnet && (
+        {/* Lead magnet attachment — показываем только если нет step_media (легаси) */}
+        {leadMagnet && (!stepMedia || stepMedia.length === 0) && (
           <div className="bg-white rounded-2xl rounded-tl-md p-2.5 max-w-[88%] shadow-soft flex items-center gap-2.5">
             <div className="size-9 rounded-xl bg-indigo-100 flex items-center justify-center text-base shrink-0">
               {EMOJI[leadMagnet.file_type] || '📎'}
@@ -176,6 +192,57 @@ export function TelegramPreview({
 const EMOJI: Record<string, string> = {
   pdf: '📄', image: '🖼️', video: '🎬', document: '📎',
 };
+
+const MEDIA_ICON: Record<string, string> = {
+  photo: '🖼️',
+  video: '🎬',
+  animation: '🎞',
+  audio: '🎵',
+  voice: '🎙',
+  document: '📎',
+};
+
+
+/**
+ * Превью media-group в стиле Telegram-альбома.
+ * - 1 элемент: один большой блок с превью.
+ * - 2 элемента: горизонтальная пара.
+ * - 3-4 элемента: 2x2 сетка.
+ * - 5-10 элементов: 3-колоночный grid.
+ *
+ * Реальные превью фото мы НЕ грузим (это превью в редакторе — миниатюра
+ * подгрузилась бы /api/funnel-step-media/{id}/file, но в TelegramPreview
+ * мы абстрактны от backend и держим компонент простым). Используем
+ * стилизованные плитки с иконкой типа.
+ */
+function MediaGroupBubble({ items }: { items: StepMediaForPreview[] }) {
+  const n = items.length;
+  const cols = n === 1 ? 1 : n === 2 ? 2 : n <= 4 ? 2 : 3;
+  const firstCaption = items.find((m) => m.caption)?.caption || null;
+  return (
+    <div className="bg-white rounded-2xl rounded-tl-md p-2 max-w-[88%] shadow-soft">
+      <div
+        className="grid gap-1"
+        style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+      >
+        {items.map((m) => (
+          <div
+            key={m.id}
+            className="aspect-square rounded-md flex items-center justify-center text-2xl bg-gradient-to-br from-zinc-100 to-zinc-200"
+            title={`${m.media_type}${m.original_filename ? ' · ' + m.original_filename : ''}`}
+          >
+            {MEDIA_ICON[m.media_type] || '📎'}
+          </div>
+        ))}
+      </div>
+      {firstCaption && (
+        <div className="mt-1.5 px-1 text-[12.5px] leading-snug text-ink whitespace-pre-wrap">
+          {firstCaption}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function formatSize(b: number): string {
   if (b < 1024) return `${b} B`;

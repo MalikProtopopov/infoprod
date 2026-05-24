@@ -14,6 +14,7 @@ import { FunnelProgress, type ProgressStep } from '@/components/FunnelProgress';
 import { TelegramPreview } from '@/components/TelegramPreview';
 import { RichTextEditor } from '@/components/RichTextEditor';
 import { QuickLeadMagnetUpload } from '@/components/QuickLeadMagnetUpload';
+import { StepMediaPanel } from '@/components/StepMediaPanel';
 import { EntryPointsSection } from '@/components/EntryPointsSection';
 import { ObservableTestPanel } from '@/components/ObservableTestPanel';
 import { ActiveFunnelWarning, ActiveFunnelConfirm } from '@/components/SafetyWarning';
@@ -21,6 +22,18 @@ import { AbTestPlaceholder } from '@/components/AbTestPlaceholder';
 
 type LeadMagnet = { id: number; name: string; file_type: string; file_size: number | null };
 type Bot = { id: number; username: string };
+
+type StepMediaBrief = {
+  id: number;
+  media_type: 'photo' | 'video' | 'animation' | 'audio' | 'document' | 'voice';
+  mime_type: string;
+  file_size: number;
+  order_idx: number;
+  caption: string | null;
+  has_telegram_file_id: boolean;
+  has_thumbnail: boolean;
+  original_filename: string | null;
+};
 
 type Step = {
   id: number;
@@ -32,6 +45,7 @@ type Step = {
   lead_magnet_id: number | null;
   buttons: ButtonRows | null;
   is_active: boolean;
+  media: StepMediaBrief[];
 };
 
 type FunnelDetail = {
@@ -73,39 +87,54 @@ function delayToHuman(minutes: number): { value: number; unit: number } {
  * Возвращает мини-метку медиа шага: иконка + цветовая схема + tooltip.
  * Используется в списке шагов (полный режим) и на рельсе (свёрнутый режим).
  *
- * Сейчас Step держит один опциональный lead_magnet_id. В Фазе B перейдём на
- * массив step_media — функция тогда вернёт стек миниатюр.
+ * Приоритет: массив step.media (Фаза B) > step.lead_magnet_id (legacy).
  */
 function getStepMediaInfo(
   step: Step,
   magnets: LeadMagnet[],
-): { icon: string; color: string; dot: string; title: string } {
+): { icon: string; color: string; dot: string; title: string; count: number } {
+  // Новая система: массив media
+  if (step.media && step.media.length > 0) {
+    const first = step.media[0];
+    const count = step.media.length;
+    const suffix = count > 1 ? ` (${count})` : '';
+    switch (first.media_type) {
+      case 'photo':
+        return { icon: count > 1 ? '🖼+' : '🖼', color: 'bg-teal-50 text-teal-700', dot: 'bg-teal-400', title: `Изображение${suffix}`, count };
+      case 'video':
+        return { icon: count > 1 ? '🎬+' : '🎬', color: 'bg-rose-50 text-rose-700', dot: 'bg-rose-400', title: `Видео${suffix}`, count };
+      case 'animation':
+        return { icon: '🎞', color: 'bg-fuchsia-50 text-fuchsia-700', dot: 'bg-fuchsia-400', title: `Анимация${suffix}`, count };
+      case 'audio':
+      case 'voice':
+        return { icon: '🎵', color: 'bg-amber-50 text-amber-700', dot: 'bg-amber-400', title: `Аудио${suffix}`, count };
+      default:
+        return { icon: '📎', color: 'bg-zinc-100 text-zinc-700', dot: 'bg-zinc-400', title: `Документ${suffix}`, count };
+    }
+  }
+  // Legacy: lead_magnet_id (для воронок без миграции)
   if (!step.lead_magnet_id) {
     return {
       icon: 'T',
       color: 'bg-zinc-100 text-zinc-500',
       dot: 'bg-zinc-300',
       title: 'Только текст',
+      count: 0,
     };
   }
   const lm = magnets.find((m) => m.id === step.lead_magnet_id);
   if (!lm) {
-    return {
-      icon: '?',
-      color: 'bg-zinc-100 text-zinc-500',
-      dot: 'bg-zinc-300',
-      title: 'Медиа удалено',
-    };
+    return { icon: '?', color: 'bg-zinc-100 text-zinc-500', dot: 'bg-zinc-300', title: 'Медиа удалено', count: 0 };
   }
   switch (lm.file_type) {
     case 'image':
-      return { icon: '🖼', color: 'bg-teal-50 text-teal-700', dot: 'bg-teal-400', title: `Изображение · ${lm.name}` };
+      return { icon: '🖼', color: 'bg-teal-50 text-teal-700', dot: 'bg-teal-400', title: `Изображение · ${lm.name}`, count: 1 };
     case 'video':
-      return { icon: '🎬', color: 'bg-rose-50 text-rose-700', dot: 'bg-rose-400', title: `Видео · ${lm.name}` };
+      return { icon: '🎬', color: 'bg-rose-50 text-rose-700', dot: 'bg-rose-400', title: `Видео · ${lm.name}`, count: 1 };
     case 'pdf':
-      return { icon: '📄', color: 'bg-amber-50 text-amber-700', dot: 'bg-amber-400', title: `PDF · ${lm.name}` };
+      return { icon: '📄', color: 'bg-amber-50 text-amber-700', dot: 'bg-amber-400', title: `PDF · ${lm.name}`, count: 1 };
     default:
-      return { icon: '📎', color: 'bg-zinc-100 text-zinc-700', dot: 'bg-zinc-400', title: `Файл · ${lm.name}` };
+      return { icon: '📎', color: 'bg-zinc-100 text-zinc-700', dot: 'bg-zinc-400', title: `Файл · ${lm.name}`, count: 1 };
   }
 }
 
@@ -568,6 +597,7 @@ function Section2Steps({
                   leadMagnet={editingStep.lead_magnet_id ? magnets.find((m) => m.id === editingStep.lead_magnet_id) || null : null}
                   buttons={editingStep.buttons}
                   botUsername={bot?.username}
+                  stepMedia={editingStep.media || []}
                 />
               ) : (
                 <div className="text-sm text-zinc-500 py-6 text-center">Выберите шаг чтобы увидеть превью</div>
@@ -668,8 +698,15 @@ function StepEditor({
       </Field>
 
       <Field
-        label="Лидмагнит"
-        hint="PDF / видео придёт пользователю отдельным сообщением после текста. Создаёт ощущение «получил ценность бесплатно»."
+        label="Медиа шага"
+        hint="До 10 файлов (фото / видео / документ). Если ≥2 — отправятся альбомом. Если 1 — с подписью и кнопками. Фото ≤ 10 MB, остальное ≤ 50 MB."
+      >
+        <StepMediaPanel stepId={local.id} />
+      </Field>
+
+      <Field
+        label="Готовый лидмагнит (старый формат)"
+        hint="Опционально, если хотите выбрать ранее загруженный лидмагнит из библиотеки. Отправится после текста, если на шаге нет своих медиа выше."
       >
         <div className="flex gap-2">
           <Select
