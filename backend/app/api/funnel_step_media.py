@@ -13,7 +13,10 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import os
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -160,6 +163,25 @@ async def update_step_media_caption(
     await session.commit()
     await session.refresh(media)
     return _to_out(media)
+
+
+@router.get("/funnel-step-media/{media_id}/file")
+async def get_step_media_file(
+    media_id: int,
+    _: Admin = Depends(current_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    """Отдаёт файл медиа с диска. Используется фронтом для миниатюр и превью."""
+    media = await session.get(FunnelStepMedia, media_id)
+    if media is None:
+        raise HTTPException(status_code=404, detail="Step media not found")
+    if not media.storage_path or not os.path.exists(media.storage_path):
+        raise HTTPException(status_code=404, detail="Файл не найден на диске")
+    return FileResponse(
+        media.storage_path,
+        media_type=media.mime_type,
+        filename=media.original_filename or f"step_media_{media_id}",
+    )
 
 
 @router.delete(
