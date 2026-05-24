@@ -41,13 +41,46 @@ def _to_out(f: Funnel, steps_count: int = 0, active: int = 0, completed: int = 0
     )
 
 
-def _step_to_out(s: FunnelStep) -> FunnelStepOut:
+def _step_to_out(s: FunnelStep, media: list | None = None) -> FunnelStepOut:
+    from app.schemas.funnel import StepMediaBrief
+
+    media_briefs: list[StepMediaBrief] = []
+    if media:
+        for m in media:
+            media_briefs.append(StepMediaBrief(
+                id=m.id, media_type=m.media_type, mime_type=m.mime_type,
+                file_size=m.file_size, order_idx=m.order_idx,
+                has_telegram_file_id=bool(m.telegram_file_id),
+                has_thumbnail=bool(m.thumbnail_path),
+                original_filename=m.original_filename, caption=m.caption,
+            ))
     return FunnelStepOut(
         id=s.id, funnel_id=s.funnel_id, order_idx=s.order_idx,
         delay_minutes=s.delay_minutes, message_text=s.message_text,
         parse_mode=s.parse_mode, lead_magnet_id=s.lead_magnet_id,
         buttons=s.buttons, is_active=s.is_active,
+        media=media_briefs,
     )
+
+
+async def _load_media_by_step(session, step_ids: list[int]) -> dict[int, list]:
+    """Batch-загрузка media для нескольких шагов. Возвращает dict step_id -> [media]."""
+    from app.models.funnel_step_media import FunnelStepMedia
+    from sqlalchemy import select
+
+    if not step_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(FunnelStepMedia)
+            .where(FunnelStepMedia.funnel_step_id.in_(step_ids))
+            .order_by(FunnelStepMedia.funnel_step_id, FunnelStepMedia.order_idx)
+        )
+    ).scalars().all()
+    out: dict[int, list] = {sid: [] for sid in step_ids}
+    for m in rows:
+        out.setdefault(m.funnel_step_id, []).append(m)
+    return out
 
 
 @router.get("", response_model=list[FunnelOut])
@@ -131,8 +164,12 @@ async def create_funnel(
             select(FunnelStep).where(FunnelStep.funnel_id == f.id).order_by(FunnelStep.order_idx)
         )
     ).scalars().all()
+    media_by_step = await _load_media_by_step(session, [s.id for s in steps])
     out = _to_out(f, steps_count=len(steps))
-    return FunnelDetailOut(**out.model_dump(), steps=[_step_to_out(s) for s in steps])
+    return FunnelDetailOut(
+        **out.model_dump(),
+        steps=[_step_to_out(s, media_by_step.get(s.id, [])) for s in steps],
+    )
 
 
 @router.get("/{funnel_id}", response_model=FunnelDetailOut)
@@ -163,8 +200,12 @@ async def get_funnel(
             )
         )
     ).scalar_one()
+    media_by_step = await _load_media_by_step(session, [s.id for s in steps])
     out = _to_out(f, steps_count=len(steps), active=active_cnt, completed=completed_cnt)
-    return FunnelDetailOut(**out.model_dump(), steps=[_step_to_out(s) for s in steps])
+    return FunnelDetailOut(
+        **out.model_dump(),
+        steps=[_step_to_out(s, media_by_step.get(s.id, [])) for s in steps],
+    )
 
 
 @router.patch("/{funnel_id}", response_model=FunnelOut)
