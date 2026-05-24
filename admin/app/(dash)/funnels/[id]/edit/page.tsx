@@ -69,6 +69,46 @@ function delayToHuman(minutes: number): { value: number; unit: number } {
   return { value: minutes, unit: 1 };
 }
 
+/**
+ * Возвращает мини-метку медиа шага: иконка + цветовая схема + tooltip.
+ * Используется в списке шагов (полный режим) и на рельсе (свёрнутый режим).
+ *
+ * Сейчас Step держит один опциональный lead_magnet_id. В Фазе B перейдём на
+ * массив step_media — функция тогда вернёт стек миниатюр.
+ */
+function getStepMediaInfo(
+  step: Step,
+  magnets: LeadMagnet[],
+): { icon: string; color: string; dot: string; title: string } {
+  if (!step.lead_magnet_id) {
+    return {
+      icon: 'T',
+      color: 'bg-zinc-100 text-zinc-500',
+      dot: 'bg-zinc-300',
+      title: 'Только текст',
+    };
+  }
+  const lm = magnets.find((m) => m.id === step.lead_magnet_id);
+  if (!lm) {
+    return {
+      icon: '?',
+      color: 'bg-zinc-100 text-zinc-500',
+      dot: 'bg-zinc-300',
+      title: 'Медиа удалено',
+    };
+  }
+  switch (lm.file_type) {
+    case 'image':
+      return { icon: '🖼', color: 'bg-teal-50 text-teal-700', dot: 'bg-teal-400', title: `Изображение · ${lm.name}` };
+    case 'video':
+      return { icon: '🎬', color: 'bg-rose-50 text-rose-700', dot: 'bg-rose-400', title: `Видео · ${lm.name}` };
+    case 'pdf':
+      return { icon: '📄', color: 'bg-amber-50 text-amber-700', dot: 'bg-amber-400', title: `PDF · ${lm.name}` };
+    default:
+      return { icon: '📎', color: 'bg-zinc-100 text-zinc-700', dot: 'bg-zinc-400', title: `Файл · ${lm.name}` };
+  }
+}
+
 export default function FunnelStudioPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const search = useSearchParams();
@@ -247,6 +287,44 @@ function Section2Steps({
   const [dragId, setDragId] = useState<number | null>(null);
   const [dropTargetId, setDropTargetId] = useState<number | null>(null);
 
+  // Сворачиваемый список шагов: persist в localStorage. По умолчанию — развёрнут
+  // на широких экранах, свёрнут на узких (< 1280px).
+  const [collapsed, setCollapsed] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const raw = window.localStorage.getItem('funnel-studio.steps-list-collapsed');
+    if (raw === '1') setCollapsed(true);
+    else if (raw === '0') setCollapsed(false);
+    else if (window.innerWidth < 1280) setCollapsed(true);
+  }, []);
+
+  function toggleCollapsed() {
+    setCollapsed((prev) => {
+      const next = !prev;
+      try {
+        window.localStorage.setItem('funnel-studio.steps-list-collapsed', next ? '1' : '0');
+      } catch {}
+      return next;
+    });
+  }
+
+  // Hotkey ⌘\ / Ctrl+\ переключает свёрнутость. Игнорируется, когда фокус
+  // внутри input / textarea / contentEditable — чтобы не ломать набор текста.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key !== '\\') return;
+      const a = document.activeElement as HTMLElement | null;
+      const tag = a?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || a?.isContentEditable) return;
+      e.preventDefault();
+      toggleCollapsed();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   // Re-sync editingId если шагов стало больше/меньше
   useEffect(() => {
     if (editingId && !funnel.steps.some((s) => s.id === editingId)) {
@@ -326,59 +404,146 @@ function Section2Steps({
             ))}
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-[1fr_1.5fr_1fr] gap-3">
-            <div className={mobileTab === 'list' ? '' : 'hidden lg:block'}>
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-xs uppercase tracking-wider text-zinc-500">Шаги</h4>
-                <Button size="sm" onClick={addStep}>+ Шаг</Button>
+          <div
+            className={`grid grid-cols-1 gap-3 transition-[grid-template-columns] duration-200 ease-in-out ${
+              collapsed
+                ? 'lg:grid-cols-[56px_2.5fr_1fr]'
+                : 'lg:grid-cols-[1fr_1.5fr_1fr]'
+            }`}
+          >
+            {/* Развёрнутый список */}
+            {!collapsed && (
+              <div className={mobileTab === 'list' ? '' : 'hidden lg:block'}>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs uppercase tracking-wider text-zinc-500">Шаги</h4>
+                  <div className="flex items-center gap-1">
+                    <Button size="sm" onClick={addStep}>+ Шаг</Button>
+                    <button
+                      type="button"
+                      onClick={toggleCollapsed}
+                      title="Свернуть список (⌘\)"
+                      className="hidden lg:inline-flex w-7 h-7 items-center justify-center rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-white/70 transition"
+                    >
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M11 19l-7-7 7-7M20 19l-7-7 7-7" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+                <ul className="space-y-2">
+                  {funnel.steps.map((s) => {
+                    const h = delayToHuman(s.delay_minutes);
+                    const unitLabel = DELAY_UNITS.find((u) => u.mult === h.unit)?.label || 'мин';
+                    const lm = magnets.find((m) => m.id === s.lead_magnet_id);
+                    const media = getStepMediaInfo(s, magnets);
+                    const isDropTarget = dropTargetId === s.id && dragId !== s.id;
+                    return (
+                      <li
+                        key={s.id}
+                        draggable
+                        onDragStart={() => setDragId(s.id)}
+                        onDragEnd={() => { setDragId(null); setDropTargetId(null); }}
+                        onDragOver={(e) => { e.preventDefault(); setDropTargetId(s.id); }}
+                        onDragLeave={() => { if (dropTargetId === s.id) setDropTargetId(null); }}
+                        onDrop={() => reorder(s.id)}
+                        className={`glass rounded-xl px-3 py-2.5 cursor-grab active:cursor-grabbing transition ${
+                          editingId === s.id ? 'ring-2 ring-indigo-400' : 'hover:bg-white/70'
+                        } ${isDropTarget ? 'border-t-4 border-indigo-500' : ''}`}
+                        onClick={() => { setEditingId(s.id); setMobileTab('editor'); }}
+                      >
+                        <div className="flex items-center gap-2.5">
+                          {/* Миниатюра типа медиа */}
+                          <div
+                            className={`size-10 rounded-lg flex items-center justify-center text-base shrink-0 ${media.color}`}
+                            title={media.title}
+                          >
+                            {media.icon}
+                          </div>
+                          {/* Номер */}
+                          <span className="size-6 rounded-md gradient-primary text-white text-[10px] font-semibold flex items-center justify-center shadow-soft shrink-0">
+                            {s.order_idx + 1}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-medium truncate">
+                              {s.message_text.slice(0, 50)}{s.message_text.length > 50 && '…'}
+                            </div>
+                            <div className="text-[11px] text-zinc-500">
+                              через {h.value} {unitLabel}
+                              {lm && <span> · {lm.name.slice(0, 20)}</span>}
+                              {!s.is_active && <span className="text-rose-500"> · OFF</span>}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            className="text-zinc-400 hover:text-rose-600 transition text-xs shrink-0"
+                            onClick={(e) => { e.stopPropagation(); deleteStep(s); }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
-              <ul className="space-y-2">
+            )}
+
+            {/* Свёрнутый рельс — только на desktop */}
+            {collapsed && (
+              <div className="hidden lg:flex lg:flex-col gap-1 items-center pt-1">
+                <button
+                  type="button"
+                  onClick={toggleCollapsed}
+                  title="Развернуть список (⌘\)"
+                  className="w-8 h-8 mb-1 flex items-center justify-center rounded-md text-zinc-400 hover:text-zinc-700 hover:bg-white/70 transition"
+                >
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M13 19l7-7-7-7M4 19l7-7-7-7" />
+                  </svg>
+                </button>
                 {funnel.steps.map((s) => {
+                  const media = getStepMediaInfo(s, magnets);
                   const h = delayToHuman(s.delay_minutes);
                   const unitLabel = DELAY_UNITS.find((u) => u.mult === h.unit)?.label || 'мин';
-                  const lm = magnets.find((m) => m.id === s.lead_magnet_id);
+                  const isActive = editingId === s.id;
                   const isDropTarget = dropTargetId === s.id && dragId !== s.id;
                   return (
-                    <li
+                    <button
                       key={s.id}
+                      type="button"
                       draggable
                       onDragStart={() => setDragId(s.id)}
                       onDragEnd={() => { setDragId(null); setDropTargetId(null); }}
                       onDragOver={(e) => { e.preventDefault(); setDropTargetId(s.id); }}
                       onDragLeave={() => { if (dropTargetId === s.id) setDropTargetId(null); }}
                       onDrop={() => reorder(s.id)}
-                      className={`glass rounded-xl px-3 py-2.5 cursor-grab active:cursor-grabbing transition ${
-                        editingId === s.id ? 'ring-2 ring-indigo-400' : 'hover:bg-white/70'
-                      } ${isDropTarget ? 'border-t-4 border-indigo-500' : ''}`}
-                      onClick={() => { setEditingId(s.id); setMobileTab('editor'); }}
+                      onClick={() => setEditingId(s.id)}
+                      title={`Шаг ${s.order_idx + 1} · через ${h.value} ${unitLabel}\n${media.title}${!s.is_active ? ' · выключен' : ''}\n${s.message_text.slice(0, 80)}`}
+                      className={`relative w-10 h-10 rounded-lg flex items-center justify-center text-xs font-semibold transition shrink-0 ${
+                        isActive
+                          ? 'gradient-primary text-white shadow-soft'
+                          : 'glass text-zinc-700 hover:bg-white/80'
+                      } ${!s.is_active ? 'opacity-50' : ''} ${
+                        isDropTarget ? 'ring-2 ring-indigo-500' : ''
+                      }`}
                     >
-                      <div className="flex items-center gap-3">
-                        <span className="size-7 rounded-lg gradient-primary text-white text-[11px] font-semibold flex items-center justify-center shadow-soft shrink-0">
-                          {s.order_idx + 1}
-                        </span>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-sm font-medium truncate">
-                            {s.message_text.slice(0, 50)}{s.message_text.length > 50 && '…'}
-                          </div>
-                          <div className="text-[11px] text-zinc-500">
-                            через {h.value} {unitLabel}
-                            {lm && <span> · 📎 {lm.name.slice(0, 20)}</span>}
-                            {!s.is_active && <span className="text-rose-500"> · OFF</span>}
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          className="text-zinc-400 hover:text-rose-600 transition text-xs shrink-0"
-                          onClick={(e) => { e.stopPropagation(); deleteStep(s); }}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    </li>
+                      {s.order_idx + 1}
+                      <span
+                        className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white ${media.dot}`}
+                      />
+                    </button>
                   );
                 })}
-              </ul>
-            </div>
+                <button
+                  type="button"
+                  onClick={addStep}
+                  title="Добавить шаг"
+                  className="w-10 h-10 mt-1 rounded-lg border-2 border-dashed border-zinc-300 text-zinc-400 hover:border-indigo-400 hover:text-indigo-500 hover:bg-indigo-50/40 transition flex items-center justify-center text-lg shrink-0"
+                >
+                  +
+                </button>
+              </div>
+            )}
 
             <div className={mobileTab === 'editor' ? '' : 'hidden lg:block'}>
               <h4 className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Редактор</h4>
