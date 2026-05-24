@@ -404,6 +404,62 @@ async def on_text_message(m: Message, bot: Bot) -> None:
     await m.answer(texts.CODE_WORD_ACCEPTED)
 
 
+# ===================== Главное меню =====================
+
+@router.callback_query(F.data == "menu:main")
+async def cb_main_menu(cb: CallbackQuery) -> None:
+    """Показать каталог продуктов (то же, что /start без параметров)."""
+    async with SessionLocal() as session:
+        await _upsert_user(session, cb)
+        await session.commit()
+        products = (
+            await session.execute(
+                select(Product).where(Product.is_active.is_(True)).order_by(Product.id)
+            )
+        ).scalars().all()
+    if not products:
+        await cb.message.answer(texts.NO_PRODUCTS)
+    else:
+        await cb.message.answer(texts.WELCOME, reply_markup=_catalog_kb(list(products)))
+    await cb.answer()
+
+
+# ===================== Запуск воронки из кнопки =====================
+
+@router.callback_query(F.data.startswith("funnel:start:"))
+async def cb_funnel_start(cb: CallbackQuery) -> None:
+    """Запустить указанную воронку для текущего юзера.
+
+    Идемпотентно: если юзер уже в этой воронке (status='active') — повторно
+    не стартует, отвечаем подтверждением.
+    """
+    try:
+        funnel_id = int(cb.data.split(":", 2)[2])
+    except (ValueError, IndexError):
+        await cb.answer("Воронка не найдена", show_alert=True)
+        return
+
+    async with SessionLocal() as session:
+        user, _ = await _upsert_user(session, cb)
+        from app.services.funnels import FunnelsService
+        funnels = FunnelsService(session)
+        existing = await funnels.find_active_entry(user_id=user.id, funnel_id=funnel_id)
+        if existing is None:
+            entry = await funnels.start_for_user(
+                user_id=user.id,
+                funnel_id=funnel_id,
+                source="button_click",
+                source_ref=None,
+            )
+            if entry is None:
+                await session.rollback()
+                await cb.answer("Не удалось запустить воронку", show_alert=True)
+                return
+        await session.commit()
+
+    await cb.answer("Подписал вас на серию сообщений ✓")
+
+
 # ===================== Отписка от напоминаний =====================
 
 @router.callback_query(F.data == "unsubscribe_notifications")
