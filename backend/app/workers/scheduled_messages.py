@@ -27,23 +27,43 @@ from app.models.user import User
 logger = structlog.get_logger("scheduled_messages")
 
 BATCH_LIMIT = 100
+# После скольки неудачных попыток отправки помечаем сообщение как
+# permanently cancelled. Защита от вечного спама в логах (типичный случай —
+# юзер заблокировал бота или test-юзер с невалидным telegram_user_id).
+MAX_ATTEMPTS = 5
 
 
 def _build_keyboard(step_buttons: Any | None, include_unsubscribe: bool = True):
-    """Inline-кнопки из step.buttons (json) + универсальная кнопка отписки."""
+    """Inline-кнопки из step.buttons (json) + универсальная кнопка отписки.
+
+    Фильтруем кнопки, у которых ни url, ни callback_data — Telegram
+    отвергает такие кнопки и роняет весь send_message ошибкой
+    'Text buttons are unallowed in the inline keyboard'.
+    """
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     keyboard: list[list[InlineKeyboardButton]] = []
     if step_buttons:
         for row in step_buttons:
-            if isinstance(row, list):
-                keyboard.append([
-                    InlineKeyboardButton(
-                        text=btn.get("text", "?"),
-                        callback_data=btn.get("callback_data"),
-                        url=btn.get("url"),
-                    ) for btn in row if isinstance(btn, dict)
-                ])
+            if not isinstance(row, list):
+                continue
+            cleaned: list[InlineKeyboardButton] = []
+            for btn in row:
+                if not isinstance(btn, dict):
+                    continue
+                url = (btn.get("url") or "").strip()
+                cb = (btn.get("callback_data") or "").strip()
+                text_btn = btn.get("text") or "?"
+                if not url and not cb:
+                    # Пустая «текстовая» кнопка — Telegram её не примет.
+                    continue
+                cleaned.append(InlineKeyboardButton(
+                    text=text_btn,
+                    url=url or None,
+                    callback_data=cb or None,
+                ))
+            if cleaned:
+                keyboard.append(cleaned)
     if include_unsubscribe:
         keyboard.append([
             InlineKeyboardButton(
@@ -80,10 +100,20 @@ async def _mark_cancelled(session: AsyncSession, msg_id: int, reason: str) -> No
 
 
 async def _mark_failed(session: AsyncSession, msg_id: int, error: str) -> None:
+    """Увеличивает attempts + error. После MAX_ATTEMPTS — помечает cancelled,
+    чтобы worker перестал бесконечно повторять заведомо безнадёжные сообщения
+    (битый telegram_user_id, бот заблокирован юзером и т.п.)."""
+    # Сначала прочитаем текущее значение attempts
+    msg = await session.get(ScheduledMessage, msg_id)
+    next_attempts = (msg.attempts if msg else 0) + 1
+    values: dict = {"error": error[:1000], "attempts": next_attempts}
+    if next_attempts >= MAX_ATTEMPTS:
+        values["cancelled_at"] = datetime.now(tz=timezone.utc)
+        values["cancel_reason"] = f"max_attempts_reached ({error[:60]})"
     await session.execute(
         update(ScheduledMessage)
         .where(ScheduledMessage.id == msg_id)
-        .values(error=error[:1000], attempts=ScheduledMessage.attempts + 1)
+        .values(**values)
     )
 
 
@@ -176,13 +206,14 @@ async def _send_media_group_then_text(
     parse_mode: str | None,
     session: AsyncSession,
 ) -> None:
-    """Шлёт media-group без подписи, потом отдельное text-сообщение с кнопками.
+    """Шлёт text-сообщение с кнопками ПЕРВЫМ, потом media-group без подписи.
 
-    Текст не помещаем в caption media-group, потому что:
-    1. Caption ограничен 1024 символами (text может быть до 4096).
-    2. Кнопки невозможно прикрепить к media-group.
-    Шлём текст ОТДЕЛЬНЫМ сообщением после альбома — пользователь видит
-    стопку медиа, под ней свежее сообщение с кнопками.
+    Порядок выбран осознанно:
+    - Если кнопки невалидны / текст слишком длинный — упадём сразу на тексте,
+      media-group не отправится дублем при retry.
+    - Caption media-group ограничен 1024 символами (text может быть до 4096),
+      а кнопки к media-group вообще невозможны — поэтому без compromise
+      шлём двумя сообщениями.
     """
     from aiogram.types import (
         InputMediaAnimation,
@@ -192,6 +223,16 @@ async def _send_media_group_then_text(
         InputMediaVideo,
     )
 
+    # 1) Текст + кнопки — первым (хрупкое место).
+    if text or keyboard:
+        await aio_bot.send_message(
+            chat_id, text,
+            parse_mode=parse_mode,
+            reply_markup=keyboard,
+            disable_web_page_preview=True,
+        )
+
+    # 2) Media-group — после успеха текста.
     items = []
     for m in media_rows:
         src = _media_input(m)
@@ -212,15 +253,6 @@ async def _send_media_group_then_text(
     for media_row, sent in zip(media_rows, sent_messages):
         fid = _extract_file_id(sent, media_row.media_type)
         await _persist_file_id(session, media_row.id, fid)
-
-    # Текст + кнопки — отдельным сообщением
-    if text or keyboard:
-        await aio_bot.send_message(
-            chat_id, text,
-            parse_mode=parse_mode,
-            reply_markup=keyboard,
-            disable_web_page_preview=True,
-        )
 
 
 async def process_due_messages(session: AsyncSession) -> dict[str, int]:
