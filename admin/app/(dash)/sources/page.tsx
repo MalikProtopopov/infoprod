@@ -15,11 +15,15 @@ type Row = {
   medium?: string | null;
   slug?: string | null;
   tracking_link_id?: number | null;
+  funnel_id?: number | null;
+  funnel_name?: string | null;
   clicks: number;
   unique_users: number;
+  entries: number;
   leads: number;
   payments: number;
   revenue: string;
+  conv_click_to_entry: number;
   conv_click_to_lead: number;
   conv_lead_to_payment: number;
   avg_check: number;
@@ -30,7 +34,7 @@ type Resp = {
   to: string;
   group_by: string;
   rows: Row[];
-  totals: { clicks: number; unique_users: number; leads: number; payments: number; revenue: string };
+  totals: { clicks: number; unique_users: number; entries: number; leads: number; payments: number; revenue: string };
 };
 
 type Period = 'today' | '7d' | '30d' | '90d';
@@ -41,11 +45,12 @@ const PERIODS: Array<{ key: Period; label: string }> = [
   { key: '90d',   label: '90 дней' },
 ];
 
-type Group = 'source' | 'campaign' | 'link';
+type Group = 'source' | 'campaign' | 'link' | 'funnel';
 const GROUPS: Array<{ key: Group; label: string }> = [
   { key: 'source',   label: 'По источнику' },
   { key: 'campaign', label: 'По кампании' },
   { key: 'link',     label: 'По ссылке' },
+  { key: 'funnel',   label: 'По воронке' },
 ];
 
 function periodRange(p: Period): { from: string; to: string } {
@@ -65,11 +70,13 @@ function periodRange(p: Period): { from: string; to: string } {
 }
 
 type Product = { id: number; name: string };
+type FunnelBrief = { id: number; name: string };
 
 export default function SourcesPage() {
   const [period, setPeriod] = useState<Period>('30d');
   const [group, setGroup] = useState<Group>('source');
   const [productId, setProductId] = useState<number | ''>('');
+  const [funnelFilter, setFunnelFilter] = useState<number | ''>('');
   const [sortKey, setSortKey] = useState<keyof Row>('revenue');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -79,8 +86,9 @@ export default function SourcesPage() {
     const { from, to } = periodRange(period);
     const params = new URLSearchParams({ from, to, group_by: group });
     if (productId) params.set('product_id', String(productId));
+    if (funnelFilter) params.set('funnel_id', String(funnelFilter));
     return `/stats/sources?${params}`;
-  }, [period, group, productId]);
+  }, [period, group, productId, funnelFilter]);
 
   const { data, isLoading } = useSWR<Resp>(swrKey, fetcher, {
     revalidateOnFocus: false,
@@ -88,6 +96,7 @@ export default function SourcesPage() {
     dedupingInterval: 60_000,
   });
   const { data: products } = useSWR<Product[]>('/products', fetcher);
+  const { data: funnels } = useSWR<FunnelBrief[]>('/funnels', fetcher);
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -180,6 +189,16 @@ export default function SourcesPage() {
           {(products || []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </Select>
 
+        <Select
+          value={funnelFilter}
+          onChange={(e) => setFunnelFilter(e.target.value ? Number(e.target.value) : '')}
+          className="!w-auto"
+          title="Только трафик этой воронки"
+        >
+          <option value="">Все воронки</option>
+          {(funnels || []).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+        </Select>
+
         <button
           onClick={downloadCsv}
           className="inline-flex items-center gap-2 px-4 h-10 rounded-xl glass-soft text-sm hover:bg-white/80 transition"
@@ -193,9 +212,10 @@ export default function SourcesPage() {
 
       {/* Totals */}
       {data && (
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-5">
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3 mb-5">
           <Totals label="Клики" value={data.totals.clicks} />
           <Totals label="Уник. юзеров" value={data.totals.unique_users} />
+          <Totals label="Подписок" value={data.totals.entries ?? 0} />
           <Totals label="Заявок" value={data.totals.leads} />
           <Totals label="Оплат" value={data.totals.payments} />
           <Totals
@@ -211,12 +231,21 @@ export default function SourcesPage() {
         {!isLoading && rows.length === 0 && <Empty>Нет данных за выбранный период</Empty>}
         {rows.length > 0 && (
           <TableWrap>
-            <table className="w-full text-sm min-w-[940px]">
+            <table className="w-full text-sm min-w-[980px]">
               <TableHead>
-                <Th>{group === 'link' ? 'Slug' : group === 'campaign' ? 'Источник / Кампания' : 'Источник'}</Th>
+                <Th>
+                  {group === 'link'
+                    ? 'Slug'
+                    : group === 'campaign'
+                    ? 'Источник / Кампания'
+                    : group === 'funnel'
+                    ? 'Воронка'
+                    : 'Источник'}
+                </Th>
                 {group === 'link' && <Th>Источник</Th>}
                 <SortableTh label="Клики" k="clicks" sortKey={sortKey} dir={sortDir} onClick={() => toggleSort('clicks')} />
                 <SortableTh label="Уник." k="unique_users" sortKey={sortKey} dir={sortDir} onClick={() => toggleSort('unique_users')} />
+                <SortableTh label="Подписок" k="entries" sortKey={sortKey} dir={sortDir} onClick={() => toggleSort('entries')} />
                 <SortableTh label="Заявок" k="leads" sortKey={sortKey} dir={sortDir} onClick={() => toggleSort('leads')} />
                 <SortableTh label="Оплат" k="payments" sortKey={sortKey} dir={sortDir} onClick={() => toggleSort('payments')} />
                 <SortableTh label="Выручка" k="revenue" sortKey={sortKey} dir={sortDir} onClick={() => toggleSort('revenue')} />
@@ -232,6 +261,8 @@ export default function SourcesPage() {
                         <code className="text-xs">{r.slug ?? '—'}</code>
                       ) : group === 'campaign' ? (
                         <span>{r.source ?? '—'}{r.campaign && <span className="text-zinc-500"> / {r.campaign}</span>}</span>
+                      ) : group === 'funnel' ? (
+                        r.funnel_name || <Pill color="gray">без воронки</Pill>
                       ) : (
                         r.source ?? <Pill color="gray">органика</Pill>
                       )}
@@ -243,6 +274,7 @@ export default function SourcesPage() {
                     )}
                     <Td>{r.clicks.toLocaleString('ru-RU')}</Td>
                     <Td>{r.unique_users.toLocaleString('ru-RU')}</Td>
+                    <Td className="text-zinc-700">{(r.entries ?? 0).toLocaleString('ru-RU')}</Td>
                     <Td>{r.leads.toLocaleString('ru-RU')}</Td>
                     <Td>{r.payments.toLocaleString('ru-RU')}</Td>
                     <Td className="font-semibold">{Number(r.revenue).toLocaleString('ru-RU')}</Td>

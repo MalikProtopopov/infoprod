@@ -11,6 +11,7 @@ from app.api.deps import current_admin, get_session
 from app.models.admin import Admin
 from app.models.bot import Bot
 from app.models.channel import Channel
+from app.models.funnel import Funnel
 from app.models.lead import Lead
 from app.models.payment import Payment
 from app.models.product import Product
@@ -144,7 +145,8 @@ async def stats_sources(
     to: datetime | None = Query(default=None),
     product_id: int | None = Query(default=None),
     bot_id: int | None = Query(default=None),
-    group_by: str = Query(default="source", pattern="^(source|campaign|link)$"),
+    funnel_id: int | None = Query(default=None),
+    group_by: str = Query(default="source", pattern="^(source|campaign|link|funnel)$"),
 ) -> dict:
     """Отчёт по источникам трафика.
 
@@ -152,6 +154,10 @@ async def stats_sources(
       - source    → группировка по utm_source
       - campaign  → по (utm_source, utm_campaign)
       - link      → по конкретной tracking_link (показываем slug)
+      - funnel    → по воронке (показываем funnel.name + кол-во подписок)
+
+    funnel_id фильтр — оставить только ссылки, привязанные к этой воронке
+    (и считать лиды/платежи только тех юзеров, кто прошёл через эту воронку).
     """
     if to is None:
         to = datetime.now(tz=timezone.utc)
@@ -159,33 +165,39 @@ async def stats_sources(
         from_ = to - timedelta(days=30)
 
     # --- 1. Клики и unique_users — агрегируем по ссылкам, попадающим в фильтры
-    link_filters = []
+    link_select = select(
+        TrackingLink.id,
+        TrackingLink.slug,
+        TrackingLink.utm_source,
+        TrackingLink.utm_medium,
+        TrackingLink.utm_campaign,
+        TrackingLink.click_count,
+        TrackingLink.unique_users,
+        TrackingLink.funnel_id,
+    )
     if product_id is not None:
-        link_filters.append(TrackingLink.product_id == product_id)
+        link_select = link_select.where(TrackingLink.product_id == product_id)
     if bot_id is not None:
-        link_filters.append(TrackingLink.bot_id == bot_id)
+        link_select = link_select.where(TrackingLink.bot_id == bot_id)
+    if funnel_id is not None:
+        link_select = link_select.where(TrackingLink.funnel_id == funnel_id)
 
-    link_rows = (
-        await session.execute(
-            select(
-                TrackingLink.id,
-                TrackingLink.slug,
-                TrackingLink.utm_source,
-                TrackingLink.utm_medium,
-                TrackingLink.utm_campaign,
-                TrackingLink.click_count,
-                TrackingLink.unique_users,
-            ).where(*link_filters) if link_filters else select(
-                TrackingLink.id,
-                TrackingLink.slug,
-                TrackingLink.utm_source,
-                TrackingLink.utm_medium,
-                TrackingLink.utm_campaign,
-                TrackingLink.click_count,
-                TrackingLink.unique_users,
-            )
+    link_rows = (await session.execute(link_select)).all()
+
+    # Имена воронок — нужны для group_by='funnel'. Грузим только те,
+    # которые встречаются в наборе ссылок.
+    funnel_ids = {r[7] for r in link_rows if r[7] is not None}
+    if funnel_id is not None:
+        funnel_ids.add(funnel_id)
+    funnel_names: dict[int, str] = {}
+    if funnel_ids:
+        funnel_names = dict(
+            (
+                await session.execute(
+                    select(Funnel.id, Funnel.name).where(Funnel.id.in_(funnel_ids))
+                )
+            ).all()
         )
-    ).all()
 
     # --- 2. Leads + payments по периоду
     lead_q = (
@@ -200,6 +212,13 @@ async def stats_sources(
     )
     if product_id is not None:
         lead_q = lead_q.where(Lead.product_id == product_id)
+    if funnel_id is not None:
+        # Лиды только тех юзеров, которые пришли через ссылки этой воронки.
+        allowed_link_ids = [r[0] for r in link_rows]
+        if allowed_link_ids:
+            lead_q = lead_q.where(Lead.tracking_link_id.in_(allowed_link_ids))
+        else:
+            lead_q = lead_q.where(Lead.id.is_(None))  # пусто
     lead_q = lead_q.group_by(Lead.tracking_link_id, Lead.utm_source, Lead.utm_medium, Lead.utm_campaign)
     lead_rows = (await session.execute(lead_q)).all()
 
@@ -213,6 +232,12 @@ async def stats_sources(
     )
     if product_id is not None:
         pay_q = pay_q.where(Payment.product_id == product_id)
+    if funnel_id is not None:
+        allowed_link_ids = [r[0] for r in link_rows]
+        if allowed_link_ids:
+            pay_q = pay_q.where(Payment.tracking_link_id.in_(allowed_link_ids))
+        else:
+            pay_q = pay_q.where(Payment.id.is_(None))
     pay_q = pay_q.group_by(Payment.tracking_link_id)
     pay_rows = (await session.execute(pay_q)).all()
 
@@ -222,99 +247,129 @@ async def stats_sources(
         pay_by_link[row[0]] = (int(row[1]), Decimal(row[2] or 0))
 
     # --- 3. Группируем
-    def _key(link_id, utm_source, utm_medium, utm_campaign, slug):
+    def _key(link_id, utm_source, utm_medium, utm_campaign, slug, fn_id):
         if group_by == "link":
             return ("link", link_id, slug, utm_source, utm_medium, utm_campaign)
         if group_by == "campaign":
             return ("campaign", utm_source or "—", utm_campaign or "—")
+        if group_by == "funnel":
+            return ("funnel", fn_id)
         return ("source", utm_source or "—")
+
+    def _meta(link_id, utm_source, utm_medium, utm_campaign, slug, fn_id):
+        if group_by == "link":
+            return {
+                "tracking_link_id": link_id, "slug": slug,
+                "source": utm_source, "medium": utm_medium, "campaign": utm_campaign,
+            }
+        if group_by == "campaign":
+            return {"source": utm_source or None, "campaign": utm_campaign or None}
+        if group_by == "funnel":
+            return {
+                "funnel_id": fn_id,
+                "funnel_name": funnel_names.get(fn_id) if fn_id is not None else None,
+            }
+        return {"source": utm_source or None}
 
     groups: dict[tuple, dict] = {}
 
     # Прокатимся по ссылкам — добавим clicks/unique
-    for l_id, slug, src, med, camp, clicks, uniq in link_rows:
-        key = _key(l_id, src, med, camp, slug)
+    for l_id, slug, src, med, camp, clicks, uniq, fn_id in link_rows:
+        key = _key(l_id, src, med, camp, slug, fn_id)
         g = groups.setdefault(key, _empty_group())
         g["clicks"] += int(clicks or 0)
         g["unique_users"] += int(uniq or 0)
-        if group_by == "link":
-            g["meta"] = {
-                "tracking_link_id": l_id,
-                "slug": slug,
-                "source": src,
-                "medium": med,
-                "campaign": camp,
-            }
-        elif group_by == "campaign":
-            g["meta"] = {"source": src or None, "campaign": camp or None}
-        else:
-            g["meta"] = {"source": src or None}
+        g["meta"] = _meta(l_id, src, med, camp, slug, fn_id)
 
     # Индексация по link_id: O(1) lookup вместо O(N) поиска в цикле.
-    # Защищает /sources от O(N×M) при росте числа ссылок.
     link_by_id: dict[int, tuple] = {r[0]: r for r in link_rows}
 
     # leads
     for tl_id, src, med, camp, cnt in lead_rows:
         slug = None
+        fn_id = None
         if tl_id is not None and tl_id in link_by_id:
-            slug = link_by_id[tl_id][1]
+            row = link_by_id[tl_id]
+            slug = row[1]
+            fn_id = row[7]
         if tl_id is None and group_by == "link":
-            # Лиды без атрибуции — отдельная группа "органика"
             key = ("link", None, None, None, None, None)
+        elif tl_id is None and group_by == "funnel":
+            # Лиды без tracking_link не относятся ни к одной воронке — пропускаем
+            continue
         else:
-            key = _key(tl_id, src, med, camp, slug)
+            key = _key(tl_id, src, med, camp, slug, fn_id)
         g = groups.setdefault(key, _empty_group())
         g["leads"] += int(cnt or 0)
         if "meta" not in g:
-            if group_by == "link":
-                g["meta"] = {
-                    "tracking_link_id": tl_id,
-                    "slug": slug,
-                    "source": src,
-                    "medium": med,
-                    "campaign": camp,
-                }
-            elif group_by == "campaign":
-                g["meta"] = {"source": src or None, "campaign": camp or None}
-            else:
-                g["meta"] = {"source": src or None}
+            g["meta"] = _meta(tl_id, src, med, camp, slug, fn_id)
 
     # payments
     for tl_id, (pcnt, prevenue) in pay_by_link.items():
         slug = None
         src = med = camp = None
+        fn_id = None
         if tl_id is not None and tl_id in link_by_id:
-            _, slug, src, med, camp, _, _ = link_by_id[tl_id]
-        key = _key(tl_id, src, med, camp, slug)
+            row = link_by_id[tl_id]
+            _, slug, src, med, camp, _, _, fn_id = row
+        if tl_id is None and group_by == "funnel":
+            continue
+        key = _key(tl_id, src, med, camp, slug, fn_id)
         g = groups.setdefault(key, _empty_group())
         g["payments"] += pcnt
         g["revenue"] = Decimal(g["revenue"]) + prevenue
         if "meta" not in g:
-            if group_by == "link":
-                g["meta"] = {
-                    "tracking_link_id": tl_id,
-                    "slug": slug,
-                    "source": src,
-                    "medium": med,
-                    "campaign": camp,
-                }
-            elif group_by == "campaign":
-                g["meta"] = {"source": src or None, "campaign": camp or None}
-            else:
-                g["meta"] = {"source": src or None}
+            g["meta"] = _meta(tl_id, src, med, camp, slug, fn_id)
+
+    # --- 3b. Подписки на воронку (funnel_entries) — отдельная колонка.
+    # Считаем только entries, пришедшие через ссылки этого набора.
+    allowed_link_ids = [r[0] for r in link_rows]
+    if allowed_link_ids:
+        from app.models.funnel_entry import FunnelEntry as _FE
+
+        entry_q = (
+            select(
+                _FE.funnel_id,
+                _FE.source_ref,
+                func.count(_FE.id).label("cnt"),
+            )
+            .where(
+                _FE.source == "tracking_link",
+                _FE.source_ref.in_(allowed_link_ids),
+                _FE.started_at >= from_,
+                _FE.started_at <= to,
+            )
+            .group_by(_FE.funnel_id, _FE.source_ref)
+        )
+        for fn_id_e, link_ref, cnt in (await session.execute(entry_q)).all():
+            tl_id = int(link_ref)
+            link = link_by_id.get(tl_id)
+            if link is None:
+                continue
+            _, slug, src, med, camp, _, _, _ = link
+            key = _key(tl_id, src, med, camp, slug, fn_id_e)
+            g = groups.setdefault(key, _empty_group())
+            g["entries"] = g.get("entries", 0) + int(cnt or 0)
+            if "meta" not in g:
+                g["meta"] = _meta(tl_id, src, med, camp, slug, fn_id_e)
 
     # --- 4. Собираем ответ
     rows = []
-    totals = {"clicks": 0, "unique_users": 0, "leads": 0, "payments": 0, "revenue": Decimal("0")}
+    totals = {
+        "clicks": 0, "unique_users": 0, "leads": 0, "payments": 0,
+        "entries": 0, "revenue": Decimal("0"),
+    }
     for key, g in groups.items():
+        entries = int(g.get("entries") or 0)
         row = {
             **g.get("meta", {}),
             "clicks": int(g["clicks"]),
             "unique_users": int(g["unique_users"]),
+            "entries": entries,
             "leads": int(g["leads"]),
             "payments": int(g["payments"]),
             "revenue": str(g["revenue"]),
+            "conv_click_to_entry": _safe_div(entries, g["clicks"]),
             "conv_click_to_lead": _safe_div(g["leads"], g["clicks"]),
             "conv_lead_to_payment": _safe_div(g["payments"], g["leads"]),
             "avg_check": _safe_div(g["revenue"], g["payments"]),
@@ -322,6 +377,7 @@ async def stats_sources(
         rows.append(row)
         totals["clicks"] += int(g["clicks"])
         totals["unique_users"] += int(g["unique_users"])
+        totals["entries"] += entries
         totals["leads"] += int(g["leads"])
         totals["payments"] += int(g["payments"])
         totals["revenue"] += Decimal(g["revenue"])
@@ -337,6 +393,7 @@ async def stats_sources(
         "totals": {
             "clicks": totals["clicks"],
             "unique_users": totals["unique_users"],
+            "entries": totals["entries"],
             "leads": totals["leads"],
             "payments": totals["payments"],
             "revenue": str(totals["revenue"]),
@@ -345,7 +402,10 @@ async def stats_sources(
 
 
 def _empty_group() -> dict:
-    return {"clicks": 0, "unique_users": 0, "leads": 0, "payments": 0, "revenue": Decimal("0")}
+    return {
+        "clicks": 0, "unique_users": 0, "entries": 0,
+        "leads": 0, "payments": 0, "revenue": Decimal("0"),
+    }
 
 
 # ============================================================
