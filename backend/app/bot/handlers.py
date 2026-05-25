@@ -24,6 +24,7 @@ from app.models.product import Product
 from app.models.subscription import Subscription
 from app.models.tracking_link import TrackingLink
 from app.models.user import User
+from app.services.step_flow import FlowMessage, FlowResult, StepFlowService
 from app.services.tracking_links import TrackingLinksService
 
 logger = logging.getLogger(__name__)
@@ -363,22 +364,49 @@ async def cb_lead(cb: CallbackQuery) -> None:
 
 # ===================== Кодовые слова (текстовые сообщения) =====================
 
+
+def _flow_buttons_to_markup(
+    buttons: list[list[dict]] | None,
+) -> InlineKeyboardMarkup | None:
+    """Преобразует двумерный массив кнопок (формат FunnelStep.buttons /
+    FlowMessage.buttons) в aiogram InlineKeyboardMarkup. Возвращает None,
+    если кнопок нет."""
+    if not buttons:
+        return None
+    rows: list[list[InlineKeyboardButton]] = []
+    for row in buttons:
+        if not row:
+            continue
+        line: list[InlineKeyboardButton] = []
+        for b in row:
+            text = (b.get("text") or "").strip()
+            if not text:
+                continue
+            url = b.get("url")
+            cd = b.get("callback_data")
+            if url:
+                line.append(InlineKeyboardButton(text=text, url=url))
+            elif cd:
+                line.append(InlineKeyboardButton(text=text, callback_data=cd))
+        if line:
+            rows.append(line)
+    return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
+
+
+async def _send_flow_messages(target: Message, msgs: list[FlowMessage]) -> None:
+    for msg in msgs:
+        kb = _flow_buttons_to_markup(msg.buttons)
+        await target.answer(msg.text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
 @router.message(F.text & ~F.text.startswith("/"))
 async def on_text_message(m: Message, bot: Bot) -> None:
-    """Резолв кодовых слов перед обычной обработкой текстовых сообщений."""
+    """Резолв активной формы → кодовые слова → пропуск."""
     text = (m.text or "").strip()
-    if not text or len(text) > 64:
+    if not text:
         return
 
     async with SessionLocal() as session:
-        from app.services.funnel_triggers import FunnelTriggersService
-        from app.services.funnels import FunnelsService
-
-        triggers = FunnelTriggersService(session)
-        trigger = await triggers.find_by_word(text)
-        if trigger is None:
-            return  # не триггер — пропускаем (можно дальше передать менеджеру)
-
         user, is_new = await _upsert_user(session, m)
         if is_new:
             our_bot_id = await _resolve_bot_id(session, bot)
@@ -386,6 +414,29 @@ async def on_text_message(m: Message, bot: Bot) -> None:
                 session, user_id=user.id, bot_id=our_bot_id,
                 product_id=None, tracking_link=None,
             )
+
+        # 1) Активная форма у юзера? Тогда трактуем текст как ответ.
+        flow = StepFlowService(session)
+        active_form = await flow.get_active(user.id, "form")
+        if active_form is not None:
+            result = await flow.submit_form_text(user_id=user.id, text=text)
+            await session.commit()
+            if result.messages:
+                await _send_flow_messages(m, result.messages)
+            return
+
+        # 2) Триггер-слово (только короткие тексты)
+        if len(text) > 64:
+            await session.commit()
+            return
+        from app.services.funnel_triggers import FunnelTriggersService
+        from app.services.funnels import FunnelsService
+
+        triggers = FunnelTriggersService(session)
+        trigger = await triggers.find_by_word(text)
+        if trigger is None:
+            await session.commit()
+            return
 
         funnels = FunnelsService(session)
         existing = await funnels.find_active_entry(
@@ -458,6 +509,129 @@ async def cb_funnel_start(cb: CallbackQuery) -> None:
         await session.commit()
 
     await cb.answer("Подписал вас на серию сообщений ✓")
+
+
+# ===================== Quiz / Form state machines =====================
+
+
+async def _resolve_active_entry_id(
+    session: AsyncSession, *, user_id: int, step_id: int
+) -> int | None:
+    """Найти активный funnel_entry юзера для воронки, которой принадлежит step.
+
+    Это связь от состояния квиза/формы к конкретной подписке в воронке,
+    чтобы потом можно было считать конверсии в аналитике.
+    """
+    from app.models.funnel_entry import FunnelEntry
+    from app.models.funnel_step import FunnelStep as _FS
+
+    funnel_id_row = (
+        await session.execute(select(_FS.funnel_id).where(_FS.id == step_id))
+    ).scalar_one_or_none()
+    if funnel_id_row is None:
+        return None
+    return (
+        await session.execute(
+            select(FunnelEntry.id).where(
+                FunnelEntry.user_id == user_id,
+                FunnelEntry.funnel_id == funnel_id_row,
+                FunnelEntry.status == "active",
+            )
+        )
+    ).scalar_one_or_none()
+
+
+@router.callback_query(F.data.startswith("quiz:start:"))
+async def cb_quiz_start(cb: CallbackQuery) -> None:
+    try:
+        step_id = int(cb.data.split(":", 2)[2])
+    except (ValueError, IndexError):
+        await cb.answer("Не нашёл квиз", show_alert=True)
+        return
+    async with SessionLocal() as session:
+        user, _ = await _upsert_user(session, cb)
+        entry_id = await _resolve_active_entry_id(session, user_id=user.id, step_id=step_id)
+        flow = StepFlowService(session)
+        result = await flow.start_quiz(
+            user_id=user.id, step_id=step_id, funnel_entry_id=entry_id,
+        )
+        await session.commit()
+    if result.error:
+        await cb.answer("Квиз сейчас недоступен", show_alert=True)
+        return
+    if result.messages:
+        await _send_flow_messages(cb.message, result.messages)
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("qa:"))
+async def cb_quiz_answer(cb: CallbackQuery) -> None:
+    parts = cb.data.split(":")
+    if len(parts) != 3:
+        await cb.answer()
+        return
+    try:
+        state_id = int(parts[1])
+        option_idx = int(parts[2])
+    except ValueError:
+        await cb.answer()
+        return
+    async with SessionLocal() as session:
+        user, _ = await _upsert_user(session, cb)
+        flow = StepFlowService(session)
+        result = await flow.answer_quiz(
+            user_id=user.id, state_id=state_id, option_idx=option_idx,
+        )
+        await session.commit()
+    if result.error == "state_not_found" or result.error == "not_in_progress":
+        await cb.answer("Этот тест уже не активен", show_alert=True)
+        return
+    if result.error:
+        await cb.answer("Не удалось обработать ответ", show_alert=True)
+        return
+    if result.messages:
+        await _send_flow_messages(cb.message, result.messages)
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("form:start:"))
+async def cb_form_start(cb: CallbackQuery) -> None:
+    try:
+        step_id = int(cb.data.split(":", 2)[2])
+    except (ValueError, IndexError):
+        await cb.answer("Не нашёл форму", show_alert=True)
+        return
+    async with SessionLocal() as session:
+        user, _ = await _upsert_user(session, cb)
+        entry_id = await _resolve_active_entry_id(session, user_id=user.id, step_id=step_id)
+        flow = StepFlowService(session)
+        result = await flow.start_form(
+            user_id=user.id, step_id=step_id, funnel_entry_id=entry_id,
+        )
+        await session.commit()
+    if result.error:
+        await cb.answer("Форма сейчас недоступна", show_alert=True)
+        return
+    if result.messages:
+        await _send_flow_messages(cb.message, result.messages)
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("form:cancel:"))
+async def cb_form_cancel(cb: CallbackQuery) -> None:
+    try:
+        state_id = int(cb.data.split(":", 2)[2])
+    except (ValueError, IndexError):
+        await cb.answer()
+        return
+    async with SessionLocal() as session:
+        user, _ = await _upsert_user(session, cb)
+        flow = StepFlowService(session)
+        result = await flow.cancel_form(user_id=user.id, state_id=state_id)
+        await session.commit()
+    if result.messages:
+        await _send_flow_messages(cb.message, result.messages)
+    await cb.answer()
 
 
 # ===================== Отписка от напоминаний =====================

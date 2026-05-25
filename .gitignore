@@ -37,3 +37,4 @@ coverage/
 # Local task outputs / temp
 .task/
 *.tmp
+seeddata/

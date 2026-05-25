@@ -14,6 +14,9 @@ class FunnelStepIn(BaseModel):
     lead_magnet_id: int | None = None
     buttons: list[list[dict[str, Any]]] | None = None
     is_active: bool = True
+    kind: str = "message"
+    quiz_data: dict[str, Any] | None = None
+    form_data: dict[str, Any] | None = None
 
 
 class StepMediaBrief(BaseModel):
@@ -42,6 +45,9 @@ class FunnelStepOut(BaseModel):
     lead_magnet_id: int | None
     buttons: list[list[dict[str, Any]]] | None
     is_active: bool
+    kind: str = "message"
+    quiz_data: dict[str, Any] | None = None
+    form_data: dict[str, Any] | None = None
     media: list[StepMediaBrief] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
