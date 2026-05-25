@@ -18,7 +18,12 @@ import { fetcher } from '@/lib/api';
  *   LEAD         — оставить заявку на продукт (callback_data=lead:{id})
  *   PRODUCT      — показать тарифы продукта (callback_data=prod:{id})
  *   FUNNEL       — запустить воронку (callback_data=funnel:start:{id})
+ *   QUIZ         — запустить квиз (callback_data=quiz:start:{step_id})
+ *   FORM         — открыть форму (callback_data=form:start:{step_id})
  *   MENU         — главное меню (callback_data=menu:main)
+ *
+ * Для QUIZ/FORM в селекторе показываются ШАГИ-контейнеры (kind='quiz'/'form')
+ * текущей воронки. Если контекст воронки неизвестен — показываем все.
  *
  * Системная кнопка «🔕 Не присылать напоминания» добавляется бэкендом
  * автоматически и здесь НЕ настраивается.
@@ -27,16 +32,25 @@ import { fetcher } from '@/lib/api';
 export type Btn = { text: string; url?: string; callback_data?: string };
 export type ButtonRows = Btn[][];
 
-type BtnKind = 'url' | 'lead' | 'product' | 'funnel' | 'menu';
+type BtnKind = 'url' | 'lead' | 'product' | 'funnel' | 'quiz' | 'form' | 'menu';
 
 type ProductBrief = { id: number; name: string };
 type FunnelBrief = { id: number; name: string };
+type StepBrief = {
+  id: number;
+  funnel_id: number;
+  kind: 'message' | 'quiz' | 'form';
+  quiz_id: number | null;
+  form_id: number | null;
+};
 
 function detectKind(b: Btn): BtnKind {
   const cd = b.callback_data || '';
   if (cd.startsWith('lead:')) return 'lead';
   if (cd.startsWith('prod:')) return 'product';
   if (cd.startsWith('funnel:start:')) return 'funnel';
+  if (cd.startsWith('quiz:start:')) return 'quiz';
+  if (cd.startsWith('form:start:')) return 'form';
   if (cd === 'menu:main') return 'menu';
   return 'url';
 }
@@ -46,6 +60,8 @@ const KIND_OPTIONS: { value: BtnKind; label: string; hint: string }[] = [
   { value: 'lead',    label: '📝 Оставить заявку',        hint: 'Создаёт Lead в админке' },
   { value: 'product', label: '💎 Показать тарифы',        hint: 'Карточка продукта с ценами 3/6/12' },
   { value: 'funnel',  label: '🎯 Запустить воронку',      hint: 'Подписать юзера на серию сообщений' },
+  { value: 'quiz',    label: '🧠 Запустить квиз',         hint: 'Открыть интерактивный опрос с подсчётом score' },
+  { value: 'form',    label: '📋 Открыть форму',          hint: 'Серия вопросов с сохранением в Lead' },
   { value: 'menu',    label: '🏠 Главное меню',           hint: 'Каталог всех продуктов' },
 ];
 
@@ -60,6 +76,10 @@ function defaultsForKind(kind: BtnKind, currentText: string): Btn {
       return { text: currentText || 'Посмотреть тарифы', callback_data: '', url: undefined };
     case 'funnel':
       return { text: currentText || 'Узнать подробнее', callback_data: '', url: undefined };
+    case 'quiz':
+      return { text: currentText || 'начать тест →', callback_data: '', url: undefined };
+    case 'form':
+      return { text: currentText || 'оставить заявку →', callback_data: '', url: undefined };
     case 'menu':
       return { text: currentText || 'Главное меню', callback_data: 'menu:main', url: undefined };
   }
@@ -69,13 +89,31 @@ function defaultsForKind(kind: BtnKind, currentText: string): Btn {
 export function ButtonsEditor({
   value,
   onChange,
+  funnelId,
 }: {
   value: ButtonRows | null;
   onChange: (next: ButtonRows | null) => void;
+  /** id текущей воронки — для фильтрации quiz/form-шагов по контексту */
+  funnelId?: number;
 }) {
   const rows = value || [];
   const { data: products } = useSWR<ProductBrief[]>('/products', fetcher);
   const { data: funnels } = useSWR<FunnelBrief[]>('/funnels', fetcher);
+
+  // Шаги-контейнеры (quiz/form) текущей воронки — для селекторов
+  const { data: funnelDetail } = useSWR<{ steps: StepBrief[] } | null>(
+    funnelId ? `/funnels/${funnelId}` : null,
+    fetcher,
+  );
+  const containerSteps: StepBrief[] = funnelDetail?.steps?.filter(
+    (s) => s.kind === 'quiz' || s.kind === 'form',
+  ) || [];
+
+  // Имена квизов/форм — батч-загрузка для лейблов в select'ах
+  const { data: quizzes } = useSWR<{ id: number; name: string }[]>('/quizzes', fetcher);
+  const { data: forms } = useSWR<{ id: number; name: string }[]>('/forms', fetcher);
+  const quizNameById = new Map((quizzes || []).map((q) => [q.id, q.name]));
+  const formNameById = new Map((forms || []).map((f) => [f.id, f.name]));
 
   function update(rowIdx: number, btnIdx: number, patch: Partial<Btn>) {
     const next = rows.map((r, ri) =>
@@ -173,6 +211,9 @@ export function ButtonsEditor({
                   btn={b}
                   products={products || []}
                   funnels={funnels || []}
+                  containerSteps={containerSteps}
+                  quizNameById={quizNameById}
+                  formNameById={formNameById}
                   onChange={(patch) => update(ri, bi, patch)}
                 />
                 <div className="text-[10px] text-zinc-500 italic">
@@ -204,12 +245,15 @@ export function ButtonsEditor({
 
 /** Поле(я) специфичное для выбранного типа кнопки. */
 function BtnActionFields({
-  kind, btn, products, funnels, onChange,
+  kind, btn, products, funnels, containerSteps, quizNameById, formNameById, onChange,
 }: {
   kind: BtnKind;
   btn: Btn;
   products: ProductBrief[];
   funnels: FunnelBrief[];
+  containerSteps: StepBrief[];
+  quizNameById: Map<number, string>;
+  formNameById: Map<number, string>;
   onChange: (patch: Partial<Btn>) => void;
 }) {
   if (kind === 'url') {
@@ -264,6 +308,50 @@ function BtnActionFields({
           <option key={f.id} value={f.id}>{f.name}</option>
         ))}
       </Select>
+    );
+  }
+
+  if (kind === 'quiz' || kind === 'form') {
+    // Селектор показывает СТУПЕНИ-контейнеры этой воронки (kind='quiz'/'form'),
+    // потому что callback_data это step_id, не quiz_id напрямую.
+    // Шаг — это место, через которое квиз/форма подключены к воронке.
+    const prefix = kind === 'quiz' ? 'quiz:start:' : 'form:start:';
+    const cd = btn.callback_data || '';
+    const currentStepId = cd.startsWith(prefix) ? cd.slice(prefix.length) : '';
+    const steps = containerSteps.filter((s) => s.kind === kind);
+    return (
+      <div className="space-y-1">
+        <Select
+          value={currentStepId}
+          onChange={(e) => onChange({
+            callback_data: e.target.value ? `${prefix}${e.target.value}` : '',
+            url: undefined,
+          })}
+        >
+          <option value="">
+            {steps.length === 0
+              ? `— нет ${kind === 'quiz' ? 'квизов' : 'форм'} в этой воронке —`
+              : `— выберите ${kind === 'quiz' ? 'квиз' : 'форму'} —`}
+          </option>
+          {steps.map((s) => {
+            const sourceId = kind === 'quiz' ? s.quiz_id : s.form_id;
+            const label = sourceId
+              ? (kind === 'quiz' ? quizNameById.get(sourceId) : formNameById.get(sourceId))
+              : null;
+            return (
+              <option key={s.id} value={s.id}>
+                {label || `шаг #${s.id} (${kind === 'quiz' ? 'квиз' : 'форма'} #${sourceId ?? '?'})`}
+              </option>
+            );
+          })}
+        </Select>
+        {steps.length === 0 && (
+          <div className="text-[10px] text-amber-700 leading-snug">
+            Добавь {kind === 'quiz' ? 'квиз' : 'форму'} в шаги воронки через
+            «+ Шаг» → выбрать тип «{kind === 'quiz' ? 'Квиз' : 'Форма'}».
+          </div>
+        )}
+      </div>
     );
   }
 

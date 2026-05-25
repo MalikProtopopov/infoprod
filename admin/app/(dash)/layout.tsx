@@ -81,6 +81,21 @@ const I = {
       <path d="M13 2L3 14h7l-1 8 10-12h-7z" />
     </svg>
   ),
+  Quiz: () => (
+    <svg className={baseIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M9.1 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  ),
+  Form: () => (
+    <svg className={baseIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4" y="3" width="16" height="18" rx="2" />
+      <line x1="8" y1="8" x2="16" y2="8" />
+      <line x1="8" y1="12" x2="16" y2="12" />
+      <line x1="8" y1="16" x2="13" y2="16" />
+    </svg>
+  ),
   Shield: () => (
     <svg className={baseIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -166,6 +181,8 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/funnels', label: 'Воронки', icon: <I.Funnel />, badge: (c) => c.funnelsTodo },
       { href: '/lead-magnets', label: 'Лидмагниты', icon: <I.Magnet /> },
       { href: '/funnel-triggers', label: 'Кодовые слова', icon: <I.Trigger /> },
+      { href: '/quizzes', label: 'Квизы', icon: <I.Quiz /> },
+      { href: '/forms', label: 'Формы', icon: <I.Form /> },
     ],
   },
   {
@@ -514,6 +531,8 @@ function buildBreadcrumbs(pathname: string): Array<{ label: string; href?: strin
     funnels: 'Воронки',
     'lead-magnets': 'Лидмагниты',
     'funnel-triggers': 'Кодовые слова',
+    quizzes: 'Квизы',
+    forms: 'Формы',
     'audit-log': 'Аудит-журнал',
     edit: 'Студия',
     entries: 'Подписчики',

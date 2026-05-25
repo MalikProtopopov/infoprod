@@ -79,11 +79,17 @@ class FunnelsService:
         self, funnel_id: int, *, order_idx: int, delay_minutes: int,
         message_text: str, lead_magnet_id: int | None = None,
         buttons: Any = None, parse_mode: str = "HTML",
+        is_active: bool = True,
+        kind: str = "message",
+        quiz_id: int | None = None,
+        form_id: int | None = None,
     ) -> FunnelStep:
         step = FunnelStep(
             funnel_id=funnel_id, order_idx=order_idx,
             delay_minutes=delay_minutes, message_text=message_text,
             parse_mode=parse_mode, lead_magnet_id=lead_magnet_id, buttons=buttons,
+            is_active=is_active,
+            kind=kind, quiz_id=quiz_id, form_id=form_id,
         )
         self.session.add(step)
         await self.session.flush()

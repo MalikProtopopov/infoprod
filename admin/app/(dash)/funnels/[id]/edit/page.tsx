@@ -45,6 +45,9 @@ type Step = {
   lead_magnet_id: number | null;
   buttons: ButtonRows | null;
   is_active: boolean;
+  kind: 'message' | 'quiz' | 'form';
+  quiz_id: number | null;
+  form_id: number | null;
   media: StepMediaBrief[];
 };
 
@@ -647,6 +650,9 @@ function StepEditor({
         lead_magnet_id: local.lead_magnet_id,
         buttons: local.buttons,
         is_active: local.is_active,
+        kind: local.kind,
+        quiz_id: local.quiz_id,
+        form_id: local.form_id,
       });
       onMutate();
       setConfirmActive(false);
@@ -654,6 +660,10 @@ function StepEditor({
       alert(e instanceof Error ? e.message : String(e));
     } finally { setSaving(false); }
   }
+
+  const isQuiz = local.kind === 'quiz';
+  const isForm = local.kind === 'form';
+  const isMessage = !isQuiz && !isForm;
 
   return (
     <div className="space-y-3">
@@ -668,64 +678,136 @@ function StepEditor({
 
       <AbTestPlaceholder stepId={local.id} />
 
-      <div className="grid grid-cols-3 gap-2">
-        <Field label="Задержка">
-          <Input type="number" min={0} value={human.value} onChange={(e) => setLocal({ ...local, delay_minutes: Number(e.target.value) * human.unit })} />
-        </Field>
-        <Field label="Единица">
-          <Select value={human.unit} onChange={(e) => setLocal({ ...local, delay_minutes: human.value * Number(e.target.value) })}>
-            {DELAY_UNITS.map((u) => <option key={u.mult} value={u.mult}>{u.label}</option>)}
-          </Select>
-        </Field>
-        <Field label="Активен">
-          <Select value={local.is_active ? '1' : '0'} onChange={(e) => setLocal({ ...local, is_active: e.target.value === '1' })}>
-            <option value="1">Да</option>
-            <option value="0">Нет</option>
-          </Select>
-        </Field>
-      </div>
-
+      {/* Тип шага */}
       <Field
-        label="Текст сообщения"
-        hint="Выделите фрагмент и примените форматирование тулбаром. Поддерживаются жирный, курсив, моноширинный, цитаты, спойлеры, ссылки. Превью справа обновляется на лету."
+        label="Тип шага"
+        hint={
+          isMessage
+            ? 'Обычное сообщение — отправляется юзеру по расписанию (delay).'
+            : isQuiz
+            ? 'Контейнер квиза. Сам в чат не уходит — открывается кнопкой quiz:start.'
+            : 'Контейнер формы. Открывается кнопкой form:start.'
+        }
       >
-        <RichTextEditor
-          rows={8}
-          value={local.message_text}
-          onChange={(next) => setLocal({ ...local, message_text: next })}
-          placeholders={['first_name', 'username']}
+        <StepKindSelector
+          kind={local.kind}
+          onChange={(nextKind) => {
+            if (nextKind === local.kind) return;
+            // При смене типа: квиз/форма не активна (не уходит в расписание),
+            // обнуляем привязки к чужой сущности.
+            if (nextKind === 'message') {
+              setLocal({ ...local, kind: 'message', quiz_id: null, form_id: null, is_active: true });
+            } else if (nextKind === 'quiz') {
+              setLocal({ ...local, kind: 'quiz', form_id: null, is_active: false, delay_minutes: 0 });
+            } else {
+              setLocal({ ...local, kind: 'form', quiz_id: null, is_active: false, delay_minutes: 0 });
+            }
+          }}
         />
       </Field>
 
-      <Field
-        label="Медиа шага"
-        hint="До 10 файлов (фото / видео / документ). Если ≥2 — отправятся альбомом. Если 1 — с подписью и кнопками. Фото ≤ 10 MB, остальное ≤ 50 MB."
-      >
-        <StepMediaPanel stepId={local.id} />
-      </Field>
+      {/* Селектор квиза / формы для container-шагов */}
+      {(isQuiz || isForm) && (
+        <Field
+          label={isQuiz ? 'Какой квиз привязать' : 'Какую форму привязать'}
+          hint={
+            isQuiz
+              ? 'Управление вопросами и вердиктами — в разделе «Квизы».'
+              : 'Управление полями и success-сообщением — в разделе «Формы».'
+          }
+        >
+          <QuizFormPicker
+            kind={local.kind as 'quiz' | 'form'}
+            value={isQuiz ? local.quiz_id : local.form_id}
+            onChange={(id) => {
+              if (isQuiz) setLocal({ ...local, quiz_id: id });
+              else setLocal({ ...local, form_id: id });
+            }}
+          />
+        </Field>
+      )}
 
-      <Field
-        label="Готовый лидмагнит (старый формат)"
-        hint="Опционально, если хотите выбрать ранее загруженный лидмагнит из библиотеки. Отправится после текста, если на шаге нет своих медиа выше."
-      >
-        <div className="flex gap-2">
-          <Select
-            className="flex-1"
-            value={local.lead_magnet_id ?? ''}
-            onChange={(e) => setLocal({ ...local, lead_magnet_id: e.target.value ? Number(e.target.value) : null })}
-          >
-            <option value="">— без лидмагнита —</option>
-            {magnets.map((m) => (
-              <option key={m.id} value={m.id}>{m.name} ({m.file_type})</option>
-            ))}
-          </Select>
-          <Button variant="ghost" size="md" onClick={() => setMagnetUploadOpen(true)}>+ Загрузить</Button>
+      {/* Параметры расписания — только для message */}
+      {isMessage && (
+        <div className="grid grid-cols-3 gap-2">
+          <Field label="Задержка">
+            <Input type="number" min={0} value={human.value} onChange={(e) => setLocal({ ...local, delay_minutes: Number(e.target.value) * human.unit })} />
+          </Field>
+          <Field label="Единица">
+            <Select value={human.unit} onChange={(e) => setLocal({ ...local, delay_minutes: human.value * Number(e.target.value) })}>
+              {DELAY_UNITS.map((u) => <option key={u.mult} value={u.mult}>{u.label}</option>)}
+            </Select>
+          </Field>
+          <Field label="Активен">
+            <Select value={local.is_active ? '1' : '0'} onChange={(e) => setLocal({ ...local, is_active: e.target.value === '1' })}>
+              <option value="1">Да</option>
+              <option value="0">Нет</option>
+            </Select>
+          </Field>
         </div>
-      </Field>
+      )}
 
-      <Field label="Inline-кнопки" hint="Опционально. Системная «🔕 Не присылать» добавляется автоматически.">
-        <ButtonsEditor value={local.buttons} onChange={(rows) => setLocal({ ...local, buttons: rows })} />
-      </Field>
+      {/* Текст / медиа / лидмагнит / кнопки — только для message */}
+      {isMessage ? (
+        <>
+          <Field
+            label="Текст сообщения"
+            hint="Выделите фрагмент и примените форматирование тулбаром. Поддерживаются жирный, курсив, моноширинный, цитаты, спойлеры, ссылки. Превью справа обновляется на лету."
+          >
+            <RichTextEditor
+              rows={8}
+              value={local.message_text}
+              onChange={(next) => setLocal({ ...local, message_text: next })}
+              placeholders={['first_name', 'username']}
+            />
+          </Field>
+
+          <Field
+            label="Медиа шага"
+            hint="До 10 файлов (фото / видео / документ). Если ≥2 — отправятся альбомом. Если 1 — с подписью и кнопками. Фото ≤ 10 MB, остальное ≤ 50 MB."
+          >
+            <StepMediaPanel stepId={local.id} />
+          </Field>
+
+          <Field
+            label="Готовый лидмагнит (старый формат)"
+            hint="Опционально, если хотите выбрать ранее загруженный лидмагнит из библиотеки. Отправится после текста, если на шаге нет своих медиа выше."
+          >
+            <div className="flex gap-2">
+              <Select
+                className="flex-1"
+                value={local.lead_magnet_id ?? ''}
+                onChange={(e) => setLocal({ ...local, lead_magnet_id: e.target.value ? Number(e.target.value) : null })}
+              >
+                <option value="">— без лидмагнита —</option>
+                {magnets.map((m) => (
+                  <option key={m.id} value={m.id}>{m.name} ({m.file_type})</option>
+                ))}
+              </Select>
+              <Button variant="ghost" size="md" onClick={() => setMagnetUploadOpen(true)}>+ Загрузить</Button>
+            </div>
+          </Field>
+
+          <Field label="Inline-кнопки" hint="Опционально. Системная «🔕 Не присылать» добавляется автоматически.">
+            <ButtonsEditor
+              value={local.buttons}
+              onChange={(rows) => setLocal({ ...local, buttons: rows })}
+              funnelId={funnel.id}
+            />
+          </Field>
+        </>
+      ) : (
+        <div className="glass-soft rounded-xl px-4 py-3 text-sm text-zinc-600">
+          <p className="mb-1">
+            {isQuiz ? '🧠 Шаг-контейнер квиза.' : '📋 Шаг-контейнер формы.'} Не отправляется в чат напрямую.
+          </p>
+          <p className="text-xs text-zinc-500">
+            Юзер попадает сюда только через кнопку с типом
+            «{isQuiz ? 'Запустить квиз' : 'Открыть форму'}»
+            на любом message-шаге (или внешней trigger-кнопке).
+          </p>
+        </div>
+      )}
 
       <div className="flex justify-between items-center pt-2">
         <div className="text-xs text-zinc-500">
@@ -885,6 +967,87 @@ function SectionHeader({
           {collapsed ? '⌄ Раскрыть' : '⌃ Свернуть'}
         </button>
       )}
+    </div>
+  );
+}
+
+
+/** Сегмент-переключатель типа шага. */
+function StepKindSelector({
+  kind, onChange,
+}: {
+  kind: 'message' | 'quiz' | 'form';
+  onChange: (next: 'message' | 'quiz' | 'form') => void;
+}) {
+  const items: { value: 'message' | 'quiz' | 'form'; label: string; emoji: string }[] = [
+    { value: 'message', label: 'Сообщение', emoji: '💬' },
+    { value: 'quiz',    label: 'Квиз',      emoji: '🧠' },
+    { value: 'form',    label: 'Форма',     emoji: '📋' },
+  ];
+  return (
+    <div className="inline-flex rounded-xl bg-zinc-100/80 p-1 text-sm">
+      {items.map((it) => {
+        const active = it.value === kind;
+        return (
+          <button
+            key={it.value}
+            type="button"
+            onClick={() => onChange(it.value)}
+            className={
+              'px-3 h-8 rounded-lg transition flex items-center gap-1.5 ' +
+              (active
+                ? 'bg-white shadow-soft text-ink font-medium'
+                : 'text-zinc-500 hover:text-ink')
+            }
+          >
+            <span>{it.emoji}</span>
+            <span>{it.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+
+/** Селектор существующего квиза/формы + кнопка «создать новый». */
+function QuizFormPicker({
+  kind, value, onChange,
+}: {
+  kind: 'quiz' | 'form';
+  value: number | null;
+  onChange: (id: number | null) => void;
+}) {
+  const endpoint = kind === 'quiz' ? '/quizzes' : '/forms';
+  const detailHref = kind === 'quiz' ? '/quizzes/' : '/forms/';
+  const { data } = useSWR<{ id: number; name: string }[]>(endpoint, fetcher);
+  return (
+    <div className="flex gap-2 items-center">
+      <Select
+        className="flex-1"
+        value={value == null ? '' : String(value)}
+        onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
+      >
+        <option value="">— не привязан —</option>
+        {(data || []).map((q) => (
+          <option key={q.id} value={q.id}>{q.name}</option>
+        ))}
+      </Select>
+      {value != null && (
+        <Link
+          href={`${detailHref}${value}`}
+          className="text-sm text-indigo-600 hover:underline shrink-0"
+        >
+          Открыть →
+        </Link>
+      )}
+      <Link
+        href={endpoint}
+        className="text-sm text-zinc-500 hover:text-ink shrink-0"
+        title={kind === 'quiz' ? 'Список квизов' : 'Список форм'}
+      >
+        + Создать
+      </Link>
     </div>
   );
 }

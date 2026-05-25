@@ -270,6 +270,10 @@ async def add_step(
         lead_magnet_id=payload.lead_magnet_id,
         buttons=payload.buttons,
         parse_mode=payload.parse_mode or "HTML",
+        is_active=payload.is_active,
+        kind=payload.kind,
+        quiz_id=payload.quiz_id,
+        form_id=payload.form_id,
     )
     await session.commit()
     await session.refresh(step)

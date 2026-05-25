@@ -218,6 +218,156 @@ export default function UserPage({ params }: { params: Promise<{ id: string }> }
           </div>
         )}
       </Card>
+
+      <SubmissionsTimeline userId={Number(id)} />
+    </div>
+  );
+}
+
+
+type SubmissionItem = {
+  id: number;
+  mode: 'quiz' | 'form';
+  status: 'in_progress' | 'completed' | 'cancelled';
+  started_at: string;
+  completed_at: string | null;
+  score: number | null;
+  current_idx: number;
+  answers: Record<string, any> | null;
+  funnel: { id: number; name: string } | null;
+  funnel_entry_id: number | null;
+  step_id: number | null;
+  quiz?: { id: number; name: string };
+  form?: { id: number; name: string };
+  lead_id?: number;
+};
+
+function SubmissionsTimeline({ userId }: { userId: number }) {
+  const { data } = useSWR<{ total: number; items: SubmissionItem[] }>(
+    `/users/${userId}/submissions`,
+    fetcher,
+  );
+
+  return (
+    <Card padded className="space-y-3">
+      <h2 className="text-lg font-semibold tracking-tight">История ответов</h2>
+      <p className="text-xs text-zinc-500 -mt-1">
+        Все квизы и формы, которые юзер прошёл или начал. Ответы хранятся в снапшоте
+        на момент прохождения — даже если содержание квиза/формы потом поменяли.
+      </p>
+      {!data ? (
+        <Empty>Загрузка…</Empty>
+      ) : data.items.length === 0 ? (
+        <Empty>Пользователь пока не отвечал ни на один квиз / форму.</Empty>
+      ) : (
+        <div className="space-y-2.5">
+          {data.items.map((it) => (
+            <SubmissionCard key={it.id} item={it} />
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+
+function SubmissionCard({ item }: { item: SubmissionItem }) {
+  const [expanded, setExpanded] = useState(false);
+  const startedTs = new Date(item.started_at).toLocaleString('ru-RU');
+  const completedTs = item.completed_at ? new Date(item.completed_at).toLocaleString('ru-RU') : null;
+  const isCompleted = item.status === 'completed';
+  const isCancelled = item.status === 'cancelled';
+  const isInProgress = item.status === 'in_progress';
+
+  const statusPill = isCompleted ? (
+    <Pill color="green">✓ завершено</Pill>
+  ) : isCancelled ? (
+    <Pill color="amber">✗ прерван</Pill>
+  ) : (
+    <Pill color="sky">в процессе</Pill>
+  );
+
+  const modeBadge = item.mode === 'quiz' ? (
+    <Pill color="indigo">🧠 квиз</Pill>
+  ) : (
+    <Pill color="violet">📋 форма</Pill>
+  );
+
+  const title = item.mode === 'quiz' ? item.quiz?.name : item.form?.name;
+  const quizItems = item.mode === 'quiz' ? (item.answers?.items as any[] | undefined) || [] : [];
+  const formSnapshots = item.mode === 'form' ? (item.answers?.__snapshots as any[] | undefined) || [] : [];
+
+  return (
+    <div className="rounded-xl bg-white/70 border border-zinc-200/70 p-3.5">
+      <div className="flex flex-wrap items-center gap-2 mb-2">
+        {modeBadge}
+        {statusPill}
+        {item.mode === 'quiz' && item.score != null && (
+          <Pill color="rose">score: {item.score}</Pill>
+        )}
+        {item.lead_id && (
+          <Pill color="green">Lead #{item.lead_id}</Pill>
+        )}
+        {item.funnel && (
+          <span className="text-xs text-zinc-500">
+            в воронке «{item.funnel.name}»
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          className="ml-auto text-xs text-indigo-600 hover:underline"
+        >
+          {expanded ? 'свернуть' : 'все ответы'}
+        </button>
+      </div>
+      <div className="text-sm font-medium text-ink">{title || '(без названия)'}</div>
+      <div className="text-xs text-zinc-500 mt-0.5">
+        начато: {startedTs}
+        {completedTs && ` · завершено: ${completedTs}`}
+        {isInProgress && ` · поле/вопрос: ${item.current_idx + 1}`}
+      </div>
+
+      {expanded && (
+        <div className="mt-3 pt-3 border-t border-zinc-100">
+          {item.mode === 'quiz' && quizItems.length > 0 && (
+            <ol className="space-y-2 text-sm">
+              {quizItems.map((qi, i) => (
+                <li key={i} className="flex flex-col gap-0.5">
+                  <span className="text-zinc-700">
+                    <span className="text-zinc-400">Q{i + 1}.</span> {qi.q}
+                  </span>
+                  <span className="text-zinc-900 ml-5">
+                    → {qi.option}{' '}
+                    {qi.score != null && (
+                      <span className="text-xs text-zinc-400">(+{qi.score})</span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+          {item.mode === 'form' && formSnapshots.length > 0 && (
+            <dl className="space-y-2 text-sm">
+              {formSnapshots.map((fs, i) => (
+                <div key={i}>
+                  <dt className="text-zinc-500 text-xs uppercase tracking-wide">{fs.question}</dt>
+                  <dd className="text-zinc-900 break-words">{fs.answer || <span className="text-zinc-400">—</span>}</dd>
+                </div>
+              ))}
+            </dl>
+          )}
+          {item.mode === 'form' && formSnapshots.length === 0 && item.answers && (
+            <pre className="text-xs bg-zinc-50 rounded-lg p-2.5 overflow-x-auto">
+              {JSON.stringify(item.answers, null, 2)}
+            </pre>
+          )}
+          {((item.mode === 'quiz' && quizItems.length === 0) ||
+            (item.mode === 'form' && formSnapshots.length === 0 && !item.answers)) && (
+            <p className="text-xs text-zinc-500 italic">Юзер ничего не успел ответить.</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
