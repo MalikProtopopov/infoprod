@@ -693,10 +693,19 @@ function StepEditor({
           kind={local.kind}
           onChange={(nextKind) => {
             if (nextKind === local.kind) return;
-            // При смене типа: квиз/форма не активна (не уходит в расписание),
-            // обнуляем привязки к чужой сущности.
+            // При смене типа: квиз/форма — контейнеры (is_active=false, delay_minutes=0),
+            // сообщение — обычный шаг. Возвращая на message, восстанавливаем delay из
+            // оригинального step (если был сохранён ранее) или 1440 (сутки).
             if (nextKind === 'message') {
-              setLocal({ ...local, kind: 'message', quiz_id: null, form_id: null, is_active: true });
+              const restoredDelay = step.kind === 'message' ? step.delay_minutes : 1440;
+              setLocal({
+                ...local,
+                kind: 'message',
+                quiz_id: null,
+                form_id: null,
+                is_active: true,
+                delay_minutes: local.delay_minutes || restoredDelay,
+              });
             } else if (nextKind === 'quiz') {
               setLocal({ ...local, kind: 'quiz', form_id: null, is_active: false, delay_minutes: 0 });
             } else {

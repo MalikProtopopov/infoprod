@@ -6,9 +6,10 @@ import useSWR from 'swr';
 
 import { api, fetcher } from '@/lib/api';
 import {
-  Button, Card, Empty, Field, Input, PageHeader, Pill, Select, Sheet,
+  Button, Card, Empty, Field, Input, PageHeader, Pill, Select, Sheet, SkeletonRow,
   TableHead, TableWrap, Td, Textarea, Th, Tr,
 } from '@/components/ui';
+import { useToast } from '@/components/Toast';
 
 type FormBrief = {
   id: number;
@@ -26,6 +27,7 @@ type Product = { id: number; name: string };
 
 export default function FormsPage() {
   const router = useRouter();
+  const { showToast } = useToast();
   const { data, mutate, isLoading } = useSWR<FormBrief[]>('/forms', fetcher);
   const { data: products } = useSWR<Product[]>('/products', fetcher);
 
@@ -57,6 +59,7 @@ export default function FormsPage() {
       setDescription('');
       setProductId('');
       mutate();
+      showToast('Форма создана');
       router.push(`/forms/${created.id}`);
     } catch (e: any) {
       setErr(e?.message || 'Ошибка');
@@ -74,24 +77,28 @@ export default function FormsPage() {
       />
 
       <Card>
-        {isLoading ? (
-          <Empty>Загрузка…</Empty>
-        ) : !data || data.length === 0 ? (
-          <Empty>Пока нет форм. Создайте первую — например, «заявка на разбор».</Empty>
-        ) : (
-          <TableWrap>
-            <table className="w-full text-sm">
-              <TableHead>
-                <Th>Название</Th>
-                <Th>Продукт</Th>
-                <Th className="text-right">Полей</Th>
-                <Th className="text-right">Начато</Th>
-                <Th className="text-right">Завершено</Th>
-                <Th className="text-right">Lead'ов</Th>
-                <Th className="text-right">% завершения</Th>
-              </TableHead>
-              <tbody>
-                {data.map((f) => {
+        <TableWrap>
+          <table className="w-full text-sm">
+            <TableHead>
+              <Th>Название</Th>
+              <Th>Продукт</Th>
+              <Th className="text-right">Полей</Th>
+              <Th className="text-right">Начато</Th>
+              <Th className="text-right">Завершено</Th>
+              <Th className="text-right">Lead'ов</Th>
+              <Th className="text-right">% завершения</Th>
+            </TableHead>
+            <tbody>
+              {isLoading ? (
+                Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} cols={7} />)
+              ) : !data || data.length === 0 ? (
+                <tr>
+                  <td colSpan={7}>
+                    <Empty>Пока нет форм. Создайте первую — например, «заявка на разбор».</Empty>
+                  </td>
+                </tr>
+              ) : (
+                data.map((f) => {
                   const pct =
                     f.submissions_total > 0
                       ? Math.round((f.submissions_completed / f.submissions_total) * 100)
@@ -126,11 +133,11 @@ export default function FormsPage() {
                       </Td>
                     </Tr>
                   );
-                })}
-              </tbody>
-            </table>
-          </TableWrap>
-        )}
+                })
+              )}
+            </tbody>
+          </table>
+        </TableWrap>
       </Card>
 
       <Sheet

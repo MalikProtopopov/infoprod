@@ -4,7 +4,7 @@ import { use, useEffect, useState } from 'react';
 import useSWR from 'swr';
 
 import { api, fetcher } from '@/lib/api';
-import { Button, Card, Empty, Field, Input, PageHeader, Pill, Textarea } from '@/components/ui';
+import { Button, Card, Empty, Field, Input, PageHeader, Pill, Skeleton, Textarea } from '@/components/ui';
 
 type UserCard = {
   user: {
@@ -78,7 +78,7 @@ export default function UserPage({ params }: { params: Promise<{ id: string }> }
   }
 
   return (
-    <div>
+    <div className="space-y-5">
       <PageHeader
         title={fullName}
         subtitle={u.username ? '@' + u.username : `Telegram ID ${u.telegram_user_id}`}
@@ -127,7 +127,7 @@ export default function UserPage({ params }: { params: Promise<{ id: string }> }
         </Card>
       </div>
 
-      <Card padded className="mt-5 anim-rise">
+      <Card padded className="anim-rise">
         <h3 className="font-semibold mb-4">Подписки</h3>
         {data.subscriptions.length === 0 ? <Empty>Подписок нет</Empty> : (
           <div className="overflow-x-auto">
@@ -161,7 +161,7 @@ export default function UserPage({ params }: { params: Promise<{ id: string }> }
         )}
       </Card>
 
-      <Card padded className="mt-5 anim-rise">
+      <Card padded className="anim-rise">
         <h3 className="font-semibold mb-4">Платежи</h3>
         {data.payments.length === 0 ? <Empty>Платежей нет</Empty> : (
           <div className="overflow-x-auto">
@@ -191,7 +191,7 @@ export default function UserPage({ params }: { params: Promise<{ id: string }> }
         )}
       </Card>
 
-      <Card padded className="mt-5 anim-rise">
+      <Card padded className="anim-rise">
         <h3 className="font-semibold mb-4">Заявки</h3>
         {data.leads.length === 0 ? <Empty>Заявок нет</Empty> : (
           <div className="overflow-x-auto">
@@ -256,7 +256,18 @@ function SubmissionsTimeline({ userId }: { userId: number }) {
         на момент прохождения — даже если содержание квиза/формы потом поменяли.
       </p>
       {!data ? (
-        <Empty>Загрузка…</Empty>
+        <div className="space-y-2.5">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <div key={i} className="rounded-xl bg-white/70 border border-zinc-200/70 p-3.5 space-y-2">
+              <div className="flex gap-2">
+                <Skeleton className="h-5 w-16 rounded-full" />
+                <Skeleton className="h-5 w-24 rounded-full" />
+              </div>
+              <Skeleton className="h-4 w-2/3" />
+              <Skeleton className="h-3 w-1/2" />
+            </div>
+          ))}
+        </div>
       ) : data.items.length === 0 ? (
         <Empty>Пользователь пока не отвечал ни на один квиз / форму.</Empty>
       ) : (
@@ -357,13 +368,8 @@ function SubmissionCard({ item }: { item: SubmissionItem }) {
               ))}
             </dl>
           )}
-          {item.mode === 'form' && formSnapshots.length === 0 && item.answers && (
-            <pre className="text-xs bg-zinc-50 rounded-lg p-2.5 overflow-x-auto">
-              {JSON.stringify(item.answers, null, 2)}
-            </pre>
-          )}
           {((item.mode === 'quiz' && quizItems.length === 0) ||
-            (item.mode === 'form' && formSnapshots.length === 0 && !item.answers)) && (
+            (item.mode === 'form' && formSnapshots.length === 0)) && (
             <p className="text-xs text-zinc-500 italic">Юзер ничего не успел ответить.</p>
           )}
         </div>

@@ -7,8 +7,10 @@ import useSWR from 'swr';
 
 import { api, fetcher } from '@/lib/api';
 import {
-  Button, Card, Empty, Field, IconButton, Input, PageHeader, Pill, Textarea,
+  Button, Card, Empty, Field, IconButton, Input, PageHeader, Pill, Skeleton, Textarea,
 } from '@/components/ui';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { useToast } from '@/components/Toast';
 
 type QuizOption = { id?: number; order_idx?: number; text: string; score: number };
 type QuizQuestion = {
@@ -39,6 +41,7 @@ type QuizDetail = {
 export default function QuizEditorPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const { showToast } = useToast();
   const { data, mutate, isLoading } = useSWR<QuizDetail>(`/quizzes/${id}`, fetcher);
 
   const [name, setName] = useState('');
@@ -48,6 +51,8 @@ export default function QuizEditorPage({ params }: { params: Promise<{ id: strin
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // Pull в локальное состояние когда данные пришли
   useEffect(() => {
@@ -93,20 +98,25 @@ export default function QuizEditorPage({ params }: { params: Promise<{ id: strin
       });
       await mutate();
       setDirty(false);
+      showToast('Квиз сохранён');
     } catch (e: any) {
       setErr(e?.message || 'Не удалось сохранить');
+      showToast(e?.message || 'Не удалось сохранить', { type: 'error' });
     } finally {
       setSaving(false);
     }
   }
 
   async function remove() {
-    if (!confirm('Удалить квиз? История прохождений сохранится, но новые попытки запустить будет нельзя.')) return;
+    setDeleting(true);
     try {
       await api.del(`/quizzes/${id}`);
+      showToast('Квиз удалён');
       router.push('/quizzes');
     } catch (e: any) {
-      setErr(e?.message || 'Ошибка');
+      showToast(e?.message || 'Не удалось удалить', { type: 'error' });
+      setDeleting(false);
+      setConfirmDelete(false);
     }
   }
 
@@ -214,7 +224,7 @@ export default function QuizEditorPage({ params }: { params: Promise<{ id: strin
   }
 
   if (isLoading || !data) {
-    return <Empty>Загрузка…</Empty>;
+    return <QuizEditorSkeleton />;
   }
 
   const maxScore = questions.reduce(
@@ -232,7 +242,7 @@ export default function QuizEditorPage({ params }: { params: Promise<{ id: strin
             <Link href="/quizzes" className="text-sm text-zinc-500 hover:text-ink self-center">
               ← К списку
             </Link>
-            <Button variant="danger" onClick={remove} disabled={saving}>
+            <Button variant="danger" onClick={() => setConfirmDelete(true)} disabled={saving}>
               Удалить
             </Button>
             <Button onClick={save} disabled={saving || !dirty}>
@@ -463,6 +473,84 @@ export default function QuizEditorPage({ params }: { params: Promise<{ id: strin
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        onConfirm={remove}
+        busy={deleting}
+        title="Удалить квиз?"
+        description={
+          <>
+            История прохождений (ответы пользователей и финальный score)
+            <b> сохранится</b> — мы храним снапшоты. Но новые попытки запустить квиз
+            будет нельзя, и все шаги воронок, привязанные к этому квизу, перестанут работать.
+          </>
+        }
+        confirmText="Да, удалить"
+      />
+    </div>
+  );
+}
+
+
+function QuizEditorSkeleton() {
+  return (
+    <div className="space-y-5 anim-fade">
+      {/* PageHeader skeleton */}
+      <div className="flex items-end justify-between gap-3">
+        <div className="space-y-2">
+          <Skeleton className="h-7 w-64" />
+          <Skeleton className="h-3 w-80" />
+        </div>
+        <div className="flex gap-2">
+          <Skeleton className="h-10 w-20" />
+          <Skeleton className="h-10 w-24" />
+        </div>
+      </div>
+
+      {/* Meta card */}
+      <Card padded className="space-y-3">
+        <Skeleton className="h-3 w-20" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-3 w-24 mt-2" />
+        <Skeleton className="h-16 w-full" />
+      </Card>
+
+      {/* Questions section */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-5 w-24" />
+          <Skeleton className="h-8 w-24" />
+        </div>
+        {Array.from({ length: 2 }).map((_, i) => (
+          <Card key={i} padded className="space-y-2">
+            <Skeleton className="h-5 w-20" />
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <div className="flex gap-2">
+              <Skeleton className="h-9 flex-1" />
+              <Skeleton className="h-9 w-24" />
+            </div>
+          </Card>
+        ))}
+      </div>
+
+      {/* Verdicts section */}
+      <div className="space-y-3">
+        <Skeleton className="h-5 w-24" />
+        {Array.from({ length: 1 }).map((_, i) => (
+          <Card key={i} padded className="space-y-3">
+            <Skeleton className="h-5 w-32" />
+            <div className="grid grid-cols-3 gap-3">
+              <Skeleton className="h-10" />
+              <Skeleton className="h-10" />
+              <Skeleton className="h-10" />
+            </div>
+            <Skeleton className="h-24 w-full" />
+          </Card>
+        ))}
+      </div>
     </div>
   );
 }

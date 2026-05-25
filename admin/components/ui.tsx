@@ -154,6 +154,47 @@ export function Empty({ children }: { children: ReactNode }) {
   return <div className="text-sm text-zinc-500 py-12 text-center">{children}</div>;
 }
 
+/* ---------- Skeleton loaders ---------- */
+
+/** Базовый pulsing-блок. Принимает className для размера. */
+export function Skeleton({ className }: { className?: string }) {
+  return (
+    <div
+      className={clsx(
+        'rounded-md bg-zinc-200/70 animate-pulse',
+        className,
+      )}
+      aria-hidden
+    />
+  );
+}
+
+/** Скелетон-строка для таблицы — повторяет высоту обычной Tr. */
+export function SkeletonRow({ cols = 4, widths }: { cols?: number; widths?: string[] }) {
+  const defaultWidths = ['w-1/3', 'w-1/4', 'w-1/5', 'w-1/6', 'w-1/5', 'w-1/4'];
+  return (
+    <tr className="border-t border-zinc-100/80">
+      {Array.from({ length: cols }).map((_, i) => (
+        <td key={i} className="px-4 py-3">
+          <Skeleton className={clsx('h-4', widths?.[i] || defaultWidths[i] || 'w-1/4')} />
+        </td>
+      ))}
+    </tr>
+  );
+}
+
+/** Скелетон для блоков-карточек — фоновая «карточка» с заглушками. */
+export function SkeletonCard({ lines = 3 }: { lines?: number }) {
+  return (
+    <div className="glass rounded-2xl p-5 space-y-3">
+      <Skeleton className="h-4 w-1/3" />
+      {Array.from({ length: lines }).map((_, i) => (
+        <Skeleton key={i} className={clsx('h-3', i === lines - 1 ? 'w-2/3' : 'w-full')} />
+      ))}
+    </div>
+  );
+}
+
 type PillColor = 'indigo' | 'violet' | 'green' | 'amber' | 'red' | 'gray' | 'sky' | 'rose';
 const PILL_STYLES: Record<PillColor, string> = {
   indigo: 'bg-indigo-100/80 text-indigo-700 ring-indigo-200',

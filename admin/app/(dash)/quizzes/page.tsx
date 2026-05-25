@@ -7,9 +7,10 @@ import useSWR from 'swr';
 
 import { api, fetcher } from '@/lib/api';
 import {
-  Button, Card, Empty, Field, Input, PageHeader, Pill, Sheet,
+  Button, Card, Empty, Field, Input, PageHeader, Pill, Sheet, SkeletonRow,
   TableHead, TableWrap, Td, Textarea, Th, Tr,
 } from '@/components/ui';
+import { useToast } from '@/components/Toast';
 
 type QuizBrief = {
   id: number;
@@ -24,6 +25,7 @@ type QuizBrief = {
 
 export default function QuizzesPage() {
   const router = useRouter();
+  const { showToast } = useToast();
   const { data, mutate, isLoading } = useSWR<QuizBrief[]>('/quizzes', fetcher);
 
   const [open, setOpen] = useState(false);
@@ -50,6 +52,7 @@ export default function QuizzesPage() {
       setName('');
       setDescription('');
       mutate();
+      showToast('Квиз создан');
       router.push(`/quizzes/${created.id}`);
     } catch (e: any) {
       setErr(e?.message || 'Ошибка');
@@ -67,23 +70,27 @@ export default function QuizzesPage() {
       />
 
       <Card>
-        {isLoading ? (
-          <Empty>Загрузка…</Empty>
-        ) : !data || data.length === 0 ? (
-          <Empty>Пока нет квизов. Создайте первый — например, «готов ли твой MVP».</Empty>
-        ) : (
-          <TableWrap>
-            <table className="w-full text-sm">
-              <TableHead>
-                <Th>Название</Th>
-                <Th className="text-right">Вопросов</Th>
-                <Th className="text-right">Вердиктов</Th>
-                <Th className="text-right">Прохождений</Th>
-                <Th className="text-right">Завершено</Th>
-                <Th className="text-right">% завершения</Th>
-              </TableHead>
-              <tbody>
-                {data.map((q) => {
+        <TableWrap>
+          <table className="w-full text-sm">
+            <TableHead>
+              <Th>Название</Th>
+              <Th className="text-right">Вопросов</Th>
+              <Th className="text-right">Вердиктов</Th>
+              <Th className="text-right">Прохождений</Th>
+              <Th className="text-right">Завершено</Th>
+              <Th className="text-right">% завершения</Th>
+            </TableHead>
+            <tbody>
+              {isLoading ? (
+                Array.from({ length: 4 }).map((_, i) => <SkeletonRow key={i} cols={6} />)
+              ) : !data || data.length === 0 ? (
+                <tr>
+                  <td colSpan={6}>
+                    <Empty>Пока нет квизов. Создайте первый — например, «готов ли твой MVP».</Empty>
+                  </td>
+                </tr>
+              ) : (
+                data.map((q) => {
                   const pct =
                     q.attempts_total > 0
                       ? Math.round((q.attempts_completed / q.attempts_total) * 100)
@@ -109,11 +116,11 @@ export default function QuizzesPage() {
                       </Td>
                     </Tr>
                   );
-                })}
-              </tbody>
-            </table>
-          </TableWrap>
-        )}
+                })
+              )}
+            </tbody>
+          </table>
+        </TableWrap>
       </Card>
 
       <Sheet

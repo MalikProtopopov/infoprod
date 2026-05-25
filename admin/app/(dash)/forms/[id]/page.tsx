@@ -7,8 +7,10 @@ import useSWR from 'swr';
 
 import { api, fetcher } from '@/lib/api';
 import {
-  Button, Card, Empty, Field, IconButton, Input, PageHeader, Pill, Select, Textarea,
+  Button, Card, Empty, Field, IconButton, Input, PageHeader, Pill, Select, Skeleton, Textarea,
 } from '@/components/ui';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { useToast } from '@/components/Toast';
 
 type FormField = {
   id?: number;
@@ -47,6 +49,7 @@ const FIELD_TYPES = [
 export default function FormEditorPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const { showToast } = useToast();
   const { data, mutate, isLoading } = useSWR<FormDetail>(`/forms/${id}`, fetcher);
   const { data: products } = useSWR<Product[]>('/products', fetcher);
 
@@ -59,6 +62,8 @@ export default function FormEditorPage({ params }: { params: Promise<{ id: strin
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!data) return;
@@ -98,20 +103,25 @@ export default function FormEditorPage({ params }: { params: Promise<{ id: strin
       });
       await mutate();
       setDirty(false);
+      showToast('Форма сохранена');
     } catch (e: any) {
       setErr(e?.message || 'Не удалось сохранить');
+      showToast(e?.message || 'Не удалось сохранить', { type: 'error' });
     } finally {
       setSaving(false);
     }
   }
 
   async function remove() {
-    if (!confirm('Удалить форму? История заявок и Lead\'ы останутся, но новые попытки заполнить будут отказаны.')) return;
+    setDeleting(true);
     try {
       await api.del(`/forms/${id}`);
+      showToast('Форма удалена');
       router.push('/forms');
     } catch (e: any) {
-      setErr(e?.message || 'Ошибка');
+      showToast(e?.message || 'Не удалось удалить', { type: 'error' });
+      setDeleting(false);
+      setConfirmDelete(false);
     }
   }
 
@@ -152,7 +162,7 @@ export default function FormEditorPage({ params }: { params: Promise<{ id: strin
   }
 
   if (isLoading || !data) {
-    return <Empty>Загрузка…</Empty>;
+    return <FormEditorSkeleton />;
   }
 
   return (
@@ -165,7 +175,7 @@ export default function FormEditorPage({ params }: { params: Promise<{ id: strin
             <Link href="/forms" className="text-sm text-zinc-500 hover:text-ink self-center">
               ← К списку
             </Link>
-            <Button variant="danger" onClick={remove} disabled={saving}>
+            <Button variant="danger" onClick={() => setConfirmDelete(true)} disabled={saving}>
               Удалить
             </Button>
             <Button onClick={save} disabled={saving || !dirty}>
@@ -356,6 +366,75 @@ export default function FormEditorPage({ params }: { params: Promise<{ id: strin
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onClose={() => setConfirmDelete(false)}
+        onConfirm={remove}
+        busy={deleting}
+        title="Удалить форму?"
+        description={
+          <>
+            Уже созданные <b>Lead'ы и история заявок</b> сохранятся —
+            мы храним <code>extra_data</code> на каждом лиде. Но новые попытки
+            заполнить форму будут отказаны, и привязки шагов воронок к этой форме оборвутся.
+          </>
+        }
+        confirmText="Да, удалить"
+      />
+    </div>
+  );
+}
+
+
+function FormEditorSkeleton() {
+  return (
+    <div className="space-y-5 anim-fade">
+      <div className="flex items-end justify-between gap-3">
+        <div className="space-y-2">
+          <Skeleton className="h-7 w-64" />
+          <Skeleton className="h-3 w-72" />
+        </div>
+        <div className="flex gap-2">
+          <Skeleton className="h-10 w-20" />
+          <Skeleton className="h-10 w-24" />
+        </div>
+      </div>
+
+      <Card padded className="space-y-3">
+        <Skeleton className="h-3 w-20" />
+        <Skeleton className="h-10 w-full" />
+        <Skeleton className="h-3 w-24 mt-2" />
+        <Skeleton className="h-16 w-full" />
+        <Skeleton className="h-3 w-20 mt-2" />
+        <Skeleton className="h-10 w-full" />
+      </Card>
+
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <Skeleton className="h-5 w-20" />
+          <Skeleton className="h-8 w-20" />
+        </div>
+        {Array.from({ length: 2 }).map((_, i) => (
+          <Card key={i} padded className="space-y-3">
+            <Skeleton className="h-5 w-20" />
+            <div className="grid grid-cols-3 gap-3">
+              <Skeleton className="h-10" />
+              <Skeleton className="h-10" />
+              <Skeleton className="h-10" />
+            </div>
+            <Skeleton className="h-16 w-full" />
+          </Card>
+        ))}
+      </div>
+
+      <Card padded className="space-y-3">
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="h-3 w-32" />
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-3 w-32 mt-2" />
+        <Skeleton className="h-20 w-full" />
+      </Card>
     </div>
   );
 }
