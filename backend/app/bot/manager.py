@@ -36,12 +36,26 @@ class _BotRunner:
 _runners: Dict[int, _BotRunner] = {}
 _lock = asyncio.Lock()
 
+# Один shared Dispatcher на все боты. aiogram 3 поддерживает
+# polling нескольких ботов одним диспетчером (он сам мультиплексирует
+# updates по bot.id). Создавать отдельный Dispatcher на каждого бота
+# нельзя — Router-инстанс из handlers.py не может быть присоединён
+# к двум Dispatcher'ам одновременно ("Router is already attached").
+_shared_dp: Dispatcher | None = None
+
+
+def _get_shared_dp() -> Dispatcher:
+    global _shared_dp
+    if _shared_dp is None:
+        _shared_dp = build_dispatcher()
+    return _shared_dp
+
 
 async def _start_bot(bot_row: BotModel) -> None:
     if bot_row.id in _runners:
         return
     bot = Bot(token=bot_row.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-    dp = build_dispatcher()
+    dp = _get_shared_dp()
     task = asyncio.create_task(_run_polling(bot, dp, bot_row.id), name=f"bot-poll-{bot_row.id}")
     _runners[bot_row.id] = _BotRunner(bot=bot, dp=dp, task=task)
     logger.info("Bot started: id=%s username=%s", bot_row.id, bot_row.username)
@@ -73,10 +87,8 @@ async def _stop_bot(bot_id: int) -> None:
     if runner is None:
         return
     runner.task.cancel()
-    try:
-        await runner.dp.stop_polling()
-    except Exception:
-        pass
+    # dp shared между ботами — stop_polling() остановил бы всех. Не вызываем,
+    # cancel task'а сам прервёт start_polling для этого бота.
     try:
         await runner.task
     except Exception:

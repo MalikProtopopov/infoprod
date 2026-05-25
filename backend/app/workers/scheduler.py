@@ -50,11 +50,15 @@ def start() -> None:
     )
     sch.add_job(
         _process_scheduled_messages,
-        IntervalTrigger(minutes=5),
+        # 30 сек — компромисс между latency для шагов с маленьким delay
+        # и нагрузкой. Для шагов с delay=0 теперь sync-отправка из
+        # handler'а (см. handlers.py · _flush_funnel_entry_now), так что
+        # тик нужен в основном для D1+, где минута расхождения не важна.
+        IntervalTrigger(seconds=30),
         id="scheduled_messages",
         max_instances=1,
         coalesce=True,
-        next_run_time=datetime.now(tz=timezone.utc) + timedelta(seconds=30),
+        next_run_time=datetime.now(tz=timezone.utc) + timedelta(seconds=15),
     )
     sch.start()
     _scheduler = sch

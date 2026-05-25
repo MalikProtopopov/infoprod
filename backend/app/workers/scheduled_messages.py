@@ -255,8 +255,16 @@ async def _send_media_group_then_text(
         await _persist_file_id(session, media_row.id, fid)
 
 
-async def process_due_messages(session: AsyncSession) -> dict[str, int]:
+async def process_due_messages(
+    session: AsyncSession,
+    *,
+    entry_id: int | None = None,
+) -> dict[str, int]:
     """Один проход воркера.
+
+    Если передан `entry_id` — обрабатываем только сообщения этого entry
+    (используется для немедленной отправки D0 при старте воронки, чтобы
+    юзер не ждал тика scheduler'а).
 
     Возвращает dict со счётчиками: sent / cancelled / failed.
     """
@@ -268,18 +276,19 @@ async def process_due_messages(session: AsyncSession) -> dict[str, int]:
     lm_svc = LeadMagnetsService(session)
 
     now = datetime.now(tz=timezone.utc)
-    rows = (
-        await session.execute(
-            select(ScheduledMessage)
-            .where(
-                ScheduledMessage.scheduled_at <= now,
-                ScheduledMessage.sent_at.is_(None),
-                ScheduledMessage.cancelled_at.is_(None),
-            )
-            .order_by(ScheduledMessage.scheduled_at.asc())
-            .limit(BATCH_LIMIT)
+    stmt = (
+        select(ScheduledMessage)
+        .where(
+            ScheduledMessage.scheduled_at <= now,
+            ScheduledMessage.sent_at.is_(None),
+            ScheduledMessage.cancelled_at.is_(None),
         )
-    ).scalars().all()
+        .order_by(ScheduledMessage.scheduled_at.asc())
+        .limit(BATCH_LIMIT)
+    )
+    if entry_id is not None:
+        stmt = stmt.where(ScheduledMessage.funnel_entry_id == entry_id)
+    rows = (await session.execute(stmt)).scalars().all()
 
     stats = {"sent": 0, "cancelled": 0, "failed": 0}
 

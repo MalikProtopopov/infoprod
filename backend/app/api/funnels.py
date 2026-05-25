@@ -188,22 +188,23 @@ async def get_funnel(
             select(FunnelStep).where(FunnelStep.funnel_id == f.id).order_by(FunnelStep.order_idx)
         )
     ).scalars().all()
-    active_cnt = (
-        await session.execute(
-            select(func.count()).select_from(FunnelEntry).where(
-                FunnelEntry.funnel_id == f.id, FunnelEntry.status == "active"
+    # Active/completed считаем одним GROUP BY — не два отдельных query.
+    entry_counts = dict(
+        (
+            await session.execute(
+                select(FunnelEntry.status, func.count(FunnelEntry.id))
+                .where(FunnelEntry.funnel_id == f.id)
+                .group_by(FunnelEntry.status)
             )
-        )
-    ).scalar_one()
-    completed_cnt = (
-        await session.execute(
-            select(func.count()).select_from(FunnelEntry).where(
-                FunnelEntry.funnel_id == f.id, FunnelEntry.status == "completed"
-            )
-        )
-    ).scalar_one()
+        ).all()
+    )
     media_by_step = await _load_media_by_step(session, [s.id for s in steps])
-    out = _to_out(f, steps_count=len(steps), active=active_cnt, completed=completed_cnt)
+    out = _to_out(
+        f,
+        steps_count=len(steps),
+        active=entry_counts.get("active", 0),
+        completed=entry_counts.get("completed", 0),
+    )
     return FunnelDetailOut(
         **out.model_dump(),
         steps=[_step_to_out(s, media_by_step.get(s.id, [])) for s in steps],

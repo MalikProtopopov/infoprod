@@ -29,6 +29,12 @@ from app.services.tracking_links import TrackingLinksService
 
 logger = logging.getLogger(__name__)
 
+# Шаблонный Router. Для каждого Dispatcher (= для каждого aiogram-бота
+# в multi-bot режиме) build_dispatcher() создаёт СВОЙ Router и копирует
+# в него все handlers. aiogram запрещает прикреплять один и тот же
+# Router-инстанс к двум Dispatcher'ам ("Router is already attached"),
+# поэтому используем глобальный только как «реестр регистраций» через
+# `_register_handlers(r)` ниже.
 router = Router(name="public")
 
 # TTL контекста ссылки между /start и нажатием «Оставить заявку»
@@ -204,17 +210,25 @@ async def start_with_arg(m: Message, command: CommandObject, bot: Bot) -> None:
             await _set_current_link(session, user.id, tracking_link.id)
 
         # Шаг 4b: запуск воронки, если у tracking_link есть funnel_id
+        new_entry_id: int | None = None
         if tracking_link and tracking_link.funnel_id:
             from app.services.funnels import FunnelsService
             funnels = FunnelsService(session)
-            await funnels.start_for_user(
+            entry = await funnels.start_for_user(
                 user_id=user.id,
                 funnel_id=tracking_link.funnel_id,
                 source="tracking_link",
                 source_ref=tracking_link.id,
             )
+            new_entry_id = entry.id if entry is not None else None
 
         await session.commit()
+
+        # Sync-flush D0 (если воронка только что стартовала). Шлём ДО показа
+        # каталога/карточки — D0 это первое касание, юзер должен видеть его
+        # первым.
+        if new_entry_id is not None:
+            await _flush_funnel_entry_now(new_entry_id)
 
         # Шаг 5: показать карточку / каталог / уведомление об устаревшей ссылке
         if product:
@@ -346,20 +360,24 @@ async def cb_lead(cb: CallbackQuery) -> None:
         await session.flush()
 
         # NEW: автозапуск default-воронки продукта
+        new_entry_id: int | None = None
         if product.default_funnel_id:
             from app.services.funnels import FunnelsService
             funnels = FunnelsService(session)
-            await funnels.start_for_user(
+            entry = await funnels.start_for_user(
                 user_id=user.id,
                 funnel_id=product.default_funnel_id,
                 source="lead_created",
                 source_ref=lead.id,
             )
+            new_entry_id = entry.id if entry is not None else None
 
         await session.commit()
 
     await cb.message.answer(texts.LEAD_SENT)
     await cb.answer("Заявка отправлена")
+    if new_entry_id is not None:
+        await _flush_funnel_entry_now(new_entry_id)
 
 
 # ===================== Кодовые слова (текстовые сообщения) =====================
@@ -397,6 +415,29 @@ async def _send_flow_messages(target: Message, msgs: list[FlowMessage]) -> None:
     for msg in msgs:
         kb = _flow_buttons_to_markup(msg.buttons)
         await target.answer(msg.text, reply_markup=kb, parse_mode=ParseMode.HTML)
+
+
+async def _flush_funnel_entry_now(entry_id: int) -> int:
+    """Немедленно отправить все scheduled_messages этого entry, у которых
+    scheduled_at <= сейчас (типично — шаг D0 с delay=0).
+
+    Открываем отдельную сессию: пред-отправочная транзакция уже должна
+    быть закоммичена в вызывающем коде. Возвращаем кол-во отправленных
+    шагов — чтобы вызывающий мог решить, стоит ли слать сопутствующее
+    подтверждение типа CODE_WORD_ACCEPTED.
+
+    Ошибки сессии не пропускаем наверх — это best-effort, плохой случай
+    подберёт обычный scheduler-тик.
+    """
+    from app.workers.scheduled_messages import process_due_messages
+
+    try:
+        async with SessionLocal() as session:
+            stats = await process_due_messages(session, entry_id=entry_id)
+            return int(stats.get("sent") or 0)
+    except Exception:
+        logger.exception("flush_funnel_entry_now.failed entry_id=%s", entry_id)
+        return 0
 
 
 @router.message(F.text & ~F.text.startswith("/"))
@@ -442,17 +483,25 @@ async def on_text_message(m: Message, bot: Bot) -> None:
         existing = await funnels.find_active_entry(
             user_id=user.id, funnel_id=trigger.funnel_id,
         )
+        new_entry_id: int | None = None
         if existing is None:
-            await funnels.start_for_user(
+            new_entry = await funnels.start_for_user(
                 user_id=user.id,
                 funnel_id=trigger.funnel_id,
                 source="code_word",
                 source_ref=trigger.id,
             )
+            new_entry_id = new_entry.id if new_entry is not None else None
             await triggers.increment_use_count(trigger.id)
         await session.commit()
 
-    await m.answer(texts.CODE_WORD_ACCEPTED)
+    # Sync-доставка шагов с delay=0 (типично — D0). Если что-то отправилось,
+    # `CODE_WORD_ACCEPTED` спойлерит начало воронки и больше не нужен.
+    sent = 0
+    if new_entry_id is not None:
+        sent = await _flush_funnel_entry_now(new_entry_id)
+    if sent == 0:
+        await m.answer(texts.CODE_WORD_ACCEPTED)
 
 
 # ===================== Главное меню =====================
@@ -490,6 +539,7 @@ async def cb_funnel_start(cb: CallbackQuery) -> None:
         await cb.answer("Воронка не найдена", show_alert=True)
         return
 
+    new_entry_id: int | None = None
     async with SessionLocal() as session:
         user, _ = await _upsert_user(session, cb)
         from app.services.funnels import FunnelsService
@@ -506,9 +556,12 @@ async def cb_funnel_start(cb: CallbackQuery) -> None:
                 await session.rollback()
                 await cb.answer("Не удалось запустить воронку", show_alert=True)
                 return
+            new_entry_id = entry.id
         await session.commit()
 
     await cb.answer("Подписал вас на серию сообщений ✓")
+    if new_entry_id is not None:
+        await _flush_funnel_entry_now(new_entry_id)
 
 
 # ===================== Quiz / Form state machines =====================
