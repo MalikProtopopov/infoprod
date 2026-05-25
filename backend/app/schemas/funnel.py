@@ -15,8 +15,8 @@ class FunnelStepIn(BaseModel):
     buttons: list[list[dict[str, Any]]] | None = None
     is_active: bool = True
     kind: str = "message"
-    quiz_data: dict[str, Any] | None = None
-    form_data: dict[str, Any] | None = None
+    quiz_id: int | None = None
+    form_id: int | None = None
 
 
 class StepMediaBrief(BaseModel):
@@ -46,8 +46,8 @@ class FunnelStepOut(BaseModel):
     buttons: list[list[dict[str, Any]]] | None
     is_active: bool
     kind: str = "message"
-    quiz_data: dict[str, Any] | None = None
-    form_data: dict[str, Any] | None = None
+    quiz_id: int | None = None
+    form_id: int | None = None
     media: list[StepMediaBrief] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}

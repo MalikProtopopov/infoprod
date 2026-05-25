@@ -36,6 +36,8 @@ from app.api.funnel_step_media import router as funnel_step_media_router  # noqa
 from app.api.funnel_triggers import router as funnel_triggers_router  # noqa: E402
 from app.api.audit_log import router as audit_router  # noqa: E402
 from app.api.feature_requests import router as feature_requests_router  # noqa: E402
+from app.api.quizzes import router as quizzes_router  # noqa: E402
+from app.api.forms import router as forms_router  # noqa: E402
 from app.bot import manager as bot_manager  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.workers import scheduler  # noqa: E402
@@ -114,5 +116,7 @@ api.include_router(funnel_step_media_router)
 api.include_router(funnel_triggers_router)
 api.include_router(audit_router)
 api.include_router(feature_requests_router)
+api.include_router(quizzes_router)
+api.include_router(forms_router)
 
 app.include_router(api)

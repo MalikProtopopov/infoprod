@@ -155,7 +155,109 @@ async def update_user(
     return UserOut.model_validate(user, from_attributes=True)
 
 
+# ───────── История ответов юзера (quiz/form submissions) ─────────
+
+
+@router.get("/{user_id}/submissions")
+async def user_submissions(
+    user_id: int,
+    _: Admin = Depends(current_admin),
+    session: AsyncSession = Depends(get_session),
+    status: str | None = Query(default=None, description="in_progress|completed|cancelled|all"),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> dict:
+    """Хронология квизов/форм юзера.
+
+    Каждый элемент содержит снапшот ответов на момент прохождения
+    (даже если квиз/форма потом отредактировали), название
+    квиза/формы из текущей версии, и контекст воронки.
+    """
+    from sqlalchemy import select, and_
+    from app.models.user_step_state import UserStepState
+    from app.models.funnel_step import FunnelStep
+    from app.models.funnel import Funnel
+    from app.models.funnel_entry import FunnelEntry
+    from app.models.quiz import Quiz
+    from app.models.form import Form
+    from app.models.lead import Lead
+
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+    conditions = [UserStepState.user_id == user_id]
+    if status and status != "all":
+        conditions.append(UserStepState.status == status)
+
+    rows = (
+        await session.execute(
+            select(
+                UserStepState,
+                FunnelStep,
+                Quiz,
+                Form,
+                Funnel,
+                FunnelEntry,
+            )
+            .join(FunnelStep, FunnelStep.id == UserStepState.funnel_step_id)
+            .outerjoin(Quiz, Quiz.id == FunnelStep.quiz_id)
+            .outerjoin(Form, Form.id == FunnelStep.form_id)
+            .outerjoin(Funnel, Funnel.id == FunnelStep.funnel_id)
+            .outerjoin(FunnelEntry, FunnelEntry.id == UserStepState.funnel_entry_id)
+            .where(and_(*conditions))
+            .order_by(UserStepState.started_at.desc())
+            .limit(limit)
+        )
+    ).all()
+
+    # Lead'ы, созданные form-submission'ами — по form_step_id + user_id
+    lead_rows = (
+        await session.execute(
+            select(Lead.id, Lead.form_step_id, Lead.created_at)
+            .where(Lead.user_id == user_id, Lead.form_step_id.isnot(None))
+        )
+    ).all()
+    leads_by_step: dict[int, list[dict]] = {}
+    for lid, fsid, lcreated in lead_rows:
+        leads_by_step.setdefault(fsid, []).append({"id": lid, "created_at": lcreated})
+
+    items: list[dict] = []
+    for state, step, quiz, form, funnel, entry in rows:
+        item = {
+            "id": state.id,
+            "mode": state.mode,
+            "status": state.status,
+            "started_at": state.started_at,
+            "completed_at": state.completed_at,
+            "score": state.score,
+            "current_idx": state.current_idx,
+            "answers": state.answers,
+            "funnel": (
+                {"id": funnel.id, "name": funnel.name} if funnel is not None else None
+            ),
+            "funnel_entry_id": entry.id if entry is not None else None,
+            "step_id": step.id if step is not None else None,
+        }
+        if state.mode == "quiz" and quiz is not None:
+            item["quiz"] = {"id": quiz.id, "name": quiz.name}
+        if state.mode == "form" and form is not None:
+            item["form"] = {"id": form.id, "name": form.name}
+            # привязываем созданный Lead если есть
+            lead_list = leads_by_step.get(step.id if step else None, [])
+            # ближайший по времени Lead (после started_at)
+            relevant = [
+                l for l in lead_list if l["created_at"] >= state.started_at
+            ]
+            if relevant:
+                relevant.sort(key=lambda x: x["created_at"])
+                item["lead_id"] = relevant[0]["id"]
+        items.append(item)
+
+    return {"total": len(items), "items": items}
+
+
 # ───────── GDPR endpoints ─────────
+
 
 @router.get("/{user_id}/export")
 async def gdpr_export(

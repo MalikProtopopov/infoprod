@@ -15,4 +15,6 @@ from app.models.funnel_entry import FunnelEntry  # noqa: F401
 from app.models.funnel_trigger import FunnelTrigger  # noqa: F401
 from app.models.scheduled_message import ScheduledMessage  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401
+from app.models.quiz import Quiz, QuizOption, QuizQuestion, QuizVerdict  # noqa: F401
+from app.models.form import Form, FormField  # noqa: F401
 from app.models.user_step_state import UserStepState  # noqa: F401

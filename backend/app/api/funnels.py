@@ -60,7 +60,7 @@ def _step_to_out(s: FunnelStep, media: list | None = None) -> FunnelStepOut:
         parse_mode=s.parse_mode, lead_magnet_id=s.lead_magnet_id,
         buttons=s.buttons, is_active=s.is_active,
         kind=getattr(s, "kind", "message") or "message",
-        quiz_data=s.quiz_data, form_data=s.form_data,
+        quiz_id=s.quiz_id, form_id=s.form_id,
         media=media_briefs,
     )
 

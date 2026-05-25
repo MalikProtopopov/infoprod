@@ -34,8 +34,12 @@ class FunnelStep(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     # Тип шага: 'message' — обычный, 'quiz' — интерактивный квиз с подсчётом,
     # 'form' — последовательный сбор ответов с сохранением в Lead.extra_data.
-    # У quiz/form шагов используются quiz_data/form_data; у message — нет.
+    # У quiz/form шагов соответственно проставлен quiz_id или form_id.
     kind: Mapped[str] = mapped_column(String(16), nullable=False, default="message", server_default="message")
-    quiz_data: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
-    form_data: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    quiz_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("quizzes.id", ondelete="SET NULL"), nullable=True
+    )
+    form_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("forms.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

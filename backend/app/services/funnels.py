@@ -59,8 +59,8 @@ class FunnelsService:
                     buttons=st.get("buttons"),
                     is_active=st.get("is_active", True),
                     kind=st.get("kind", "message"),
-                    quiz_data=st.get("quiz_data"),
-                    form_data=st.get("form_data"),
+                    quiz_id=st.get("quiz_id"),
+                    form_id=st.get("form_id"),
                 )
                 self.session.add(step)
             await self.session.flush()
