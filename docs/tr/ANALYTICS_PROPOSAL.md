@@ -3,8 +3,11 @@
 > Документ отвечает на два вопроса:
 > 1. **Что у нас сейчас в БД** — что фиксируется, а что нет, и какие метрики можно вытащить уже сегодня без миграций.
 > 2. **Как должна выглядеть аналитика** — концепт страницы «Эффективность» с time-series графиками, фильтрами и pareto-таблицей.
->
-> Не реализация, только дизайн + reality-check.
+
+> **Статус:** Phase A реализована и задеплоена (commit `d63e2ea`, 2026-05-23).
+> Endpoints: `/api/stats/timeline`, `/api/stats/funnels/{id}/conversion`,
+> `/api/stats/funnels/summary`, `/api/stats/health`. UI: `/analytics`.
+> См. §11 «Результаты reality-check» и §12 «Что реально сделали».
 
 ---
 
@@ -653,4 +656,112 @@ CREATE INDEX IF NOT EXISTS ix_users_first_utm_source
 При <100k строк в Lead/Payment они не нужны — Postgres делает seq scan
 быстро. При росте до ~1M — без индексов запросы за месяц начнут идти 1+ сек,
 а на год — десятки секунд. Можно добавить лениво, по факту проблемы.
+
+---
+
+## Часть 11. Результаты reality-check на проде (2026-05-23)
+
+Прогнал §9 SQL — картина оказалась **критичной для решения о scope UI**:
+
+| Метрика | Значение | Импликация |
+|---|---|---|
+| Лидов за 30 дней | **4** | данных почти нет |
+| Атрибутировано (utm) | **0%** | tracking-ссылок не существует вообще |
+| Распределение источников | только organic | utm-разрез показывать нечего |
+| Tracking links total / active / clicks | **0 / 0 / 0** | пусто |
+| Лиды per user | 2 (у 2 юзеров) | минимум |
+| ScheduledMessage | total=2, sent=0, **errored=2** | от test-run админа без TG |
+| Funnel entries | 1 из 1 — **manual** | все entries тестовые |
+| notifications_enabled | 100% true | хорошо |
+| Платежи | 4 / 3 paying users / **130 000 ₽** | вручную через POST /payments |
+| Active funnels | 1 (Корп сайт), 2 шага | минимум |
+
+**Главный вывод:** прод — фактически чистая среда без реального трафика.
+Делать full UI с графиками, которые покажут **пустые экраны на всех 4
+блоках**, было бы неуважением к юзеру. Поэтому в Phase A добавлен
+**health-block** (§5 ниже) — он на пустых данных даёт **полезную ценность**:
+показывает что именно нужно создать, чтобы аналитика начала работать.
+
+ScheduledMessage failed=2 не баг production-логики — это `/test-run`
+эндпоинт пытался доставить себе сообщения от админа, у которого нет
+TG-аккаунта в системе. Telegram отвечает `chat not found`. Health-block
+честно показывает эту ошибку с пояснением.
+
+---
+
+## Часть 12. Что реально сделано в Phase A (2026-05-23)
+
+### Backend
+
+| Endpoint | Что отдаёт |
+|---|---|
+| `GET /api/stats/timeline` | Time-series leads/payments/revenue, params: `from`, `to`, `granularity=day\|week\|month`, `dimension=source\|campaign\|product\|none`, `attribution=last\|first`, `product_id` |
+| `GET /api/stats/funnels/{id}/conversion` | Step-by-step метрики воронки: per-step `delivered/pending/cancelled/failed` + `successful_outcomes` (включая cancelled-by-payment) + `revenue_attributed` |
+| `GET /api/stats/funnels/summary` | Pareto по всем воронкам с CVR, revenue, sort по revenue desc |
+| `GET /api/stats/health` | Сводка для health-block UI: warnings + summary numbers |
+
+**Alembic 0070_analytics_indexes** — 9 индексов:
+`leads(created_at, utm_source)`, `leads(created_at, tracking_link_id)`,
+`leads(created_at, product_id)`, `payments(created_at, tracking_link_id)`,
+`payments(created_at, product_id)`, `scheduled_messages(funnel_step_id, sent_at)`,
+`funnel_entries(funnel_id, started_at)`, `funnel_entries(funnel_id, status)`,
+`users(first_utm_source) WHERE NOT NULL`.
+
+**19 новых unit-тестов** в `test_api_stats_analytics.py`:
+- Timeline: shape, group by, first-touch, product-filter, granularity, payments-revenue, invalid-param
+- Conversion: 404, empty, exclude-manual, cancelled-by-payment-as-success
+- Summary: empty, per-funnel, sort-by-revenue
+- Health: empty-warnings, no-warning-when-OK, test-data-warning, auth
+
+### Frontend
+
+**Страница `/analytics`** с 5 секциями:
+
+1. **Health-warnings блок** — показывает критичные подсказки сверху
+   (нет ссылок / бот падает / есть тестовые данные / >20% отключили уведомления).
+   Каждая warning имеет severity color (info=sky, warning=amber, error=rose)
+   и опциональную action-кнопку («Создать ссылку →» с глубокой ссылкой).
+
+2. **Filters** — period (7/30/90 дней) + product + dimension + attribution
+   toggle (Last-touch / First-touch) + granularity (день/неделя/месяц).
+
+3. **4 big numbers** — Лиды / Оплаты / Выручка / Конверсия лид→оплата
+   (Конверсия = `payments/leads`, `—` если leads=0).
+
+4. **Stacked area chart** (recharts) — стэк по dimension во времени;
+   toggle между метриками (leads/payments/revenue).
+
+5. **Pareto table** — топ группировок по выручке + CVR + лиды + оплаты.
+
+6. **Funnels list** — карточки воронок с конверсией, успешными исходами
+   (`completed` + `cancelled_by_payment`), платежами и выручкой.
+   Клик → `/funnels/{id}/edit` (Студия).
+
+**Empty-states** на всех блоках — если данных нет, показываем подсказку
+вместо пустого графика. Заметки в футере страницы объясняют семантику
+last-touch / first-touch / cancelled-by-payment / test-run.
+
+### Что НЕ сделано (отложено на Phase B)
+
+- Click-events table — нужно для time-series кликов (сейчас counters).
+- Lead-magnet-downloads table — для time-series скачиваний.
+- Funnel-trigger-uses table — для time-series триггеров.
+- Cohort heatmap — отложен до тех пор пока не будет >50 paying users.
+- LTV per source — то же; на 3 paying users график бессмысленный.
+
+Phase B имеет смысл когда:
+- Создадут хотя бы 3-5 tracking-ссылок (сейчас 0)
+- Пойдёт реальный трафик >50 лидов/мес
+- Возникнет вопрос «куда лить деньги» — Phase A покажет high-level, B даст детализацию
+
+### Файлы
+
+- `backend/app/api/stats.py` — +4 endpoint'а, ~440 строк
+- `backend/alembic/versions/20260523_0070_analytics_indexes.py` — миграция
+- `backend/tests/unit/test_api_stats_analytics.py` — 19 тестов
+- `admin/app/(dash)/analytics/page.tsx` — UI ~370 строк
+- `admin/app/(dash)/layout.tsx` — sidebar пункт + breadcrumb + Chart icon
+- `admin/package.json` — `recharts ^3.8.1`
+
+Commit: `d63e2ea` — `feat(analytics): Phase A — страница /analytics, 4 endpoint'а, индексы и health-check`
 

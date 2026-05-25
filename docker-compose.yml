@@ -26,6 +26,10 @@ services:
     networks: [internal]
     expose:
       - "8000"
+    # Volume для медиа шагов воронки и лидмагнитов — без него файлы
+    # пропадают при каждой пересборке контейнера (path: /var/lib/infobizbot).
+    volumes:
+      - bot_media:/var/lib/infobizbot
     command: >
       sh -c "alembic upgrade head &&
              uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"
@@ -77,3 +81,4 @@ networks:
 
 volumes:
   pgdata:
+  bot_media:

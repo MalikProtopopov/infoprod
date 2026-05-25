@@ -117,13 +117,34 @@ async def _mark_failed(session: AsyncSession, msg_id: int, error: str) -> None:
     )
 
 
-def _media_input(media: FunnelStepMedia):
+def _media_input(media: FunnelStepMedia, *, force_disk: bool = False):
     """Возвращает аргумент для aiogram: telegram_file_id (str) если есть кэш,
-    иначе FSInputFile с диска."""
+    иначе FSInputFile с диска.
+
+    `force_disk=True` — игнорирует cache и грузит файл с диска. Используется
+    в retry после ошибки "wrong file identifier" (typично — file_id из-под
+    другого бота при смене bot_id у воронки).
+    """
     from aiogram.types import FSInputFile
-    if media.telegram_file_id:
+    if not force_disk and media.telegram_file_id:
         return media.telegram_file_id
     return FSInputFile(media.storage_path, filename=media.original_filename or None)
+
+
+def _is_bad_file_id_error(err: Exception) -> bool:
+    """Telegram отвечает 400 'wrong file identifier' если file_id невалиден
+    или принадлежит другому боту. Хотим распознать и повторить с диска."""
+    msg = str(err).lower()
+    return "wrong file identifier" in msg or "wrong file_id" in msg
+
+
+async def _reset_file_id(session: AsyncSession, media_id: int) -> None:
+    """Снести закешированный file_id перед retry с диска."""
+    await session.execute(
+        update(FunnelStepMedia)
+        .where(FunnelStepMedia.id == media_id)
+        .values(telegram_file_id=None)
+    )
 
 
 def _extract_file_id(message, media_type: str) -> str | None:
@@ -173,25 +194,46 @@ async def _send_single_media(
     parse_mode: str | None,
     session: AsyncSession,
 ) -> None:
-    """Отправляет один файл с текстом-caption и inline-кнопками."""
-    src = _media_input(media)
+    """Отправляет один файл с текстом-caption и inline-кнопками.
+
+    Если у media закеширован чужой telegram_file_id (например, был
+    закеширован под другим ботом до смены bot_id у funnel) — Telegram
+    отвергнет с "wrong file identifier". Ловим эту ошибку, сбрасываем
+    кеш и повторяем с диска.
+    """
     caption = text  # текст шага идёт как caption
+
+    async def _do_send(force_disk: bool):
+        src = _media_input(media, force_disk=force_disk)
+        if media.media_type == "photo":
+            return await aio_bot.send_photo(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=keyboard)
+        if media.media_type == "video":
+            return await aio_bot.send_video(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=keyboard)
+        if media.media_type == "animation":
+            return await aio_bot.send_animation(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=keyboard)
+        if media.media_type == "audio":
+            return await aio_bot.send_audio(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=keyboard)
+        if media.media_type == "voice":
+            # voice не поддерживает caption и parse_mode — шлём текст отдельным сообщением.
+            await aio_bot.send_message(chat_id, text, parse_mode=parse_mode, reply_markup=keyboard,
+                                       disable_web_page_preview=True)
+            return await aio_bot.send_voice(chat_id, src)
+        # document
+        return await aio_bot.send_document(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=keyboard)
+
     sent = None
-    if media.media_type == "photo":
-        sent = await aio_bot.send_photo(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=keyboard)
-    elif media.media_type == "video":
-        sent = await aio_bot.send_video(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=keyboard)
-    elif media.media_type == "animation":
-        sent = await aio_bot.send_animation(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=keyboard)
-    elif media.media_type == "audio":
-        sent = await aio_bot.send_audio(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=keyboard)
-    elif media.media_type == "voice":
-        # voice не поддерживает caption и parse_mode — шлём текст отдельным сообщением.
-        await aio_bot.send_message(chat_id, text, parse_mode=parse_mode, reply_markup=keyboard,
-                                   disable_web_page_preview=True)
-        sent = await aio_bot.send_voice(chat_id, src)
-    else:  # document
-        sent = await aio_bot.send_document(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=keyboard)
+    try:
+        sent = await _do_send(force_disk=False)
+    except Exception as e:  # noqa: BLE001
+        if media.telegram_file_id and _is_bad_file_id_error(e):
+            logger.warning(
+                "step_media.stale_file_id media_id=%s — retrying from disk", media.id,
+            )
+            await _reset_file_id(session, media.id)
+            media.telegram_file_id = None
+            sent = await _do_send(force_disk=True)
+        else:
+            raise
 
     fid = _extract_file_id(sent, media.media_type) if sent else None
     await _persist_file_id(session, media.id, fid)
@@ -233,22 +275,39 @@ async def _send_media_group_then_text(
         )
 
     # 2) Media-group — после успеха текста.
-    items = []
-    for m in media_rows:
-        src = _media_input(m)
-        cap = m.caption  # per-item caption
-        if m.media_type == "photo":
-            items.append(InputMediaPhoto(media=src, caption=cap, parse_mode=parse_mode if cap else None))
-        elif m.media_type == "video":
-            items.append(InputMediaVideo(media=src, caption=cap, parse_mode=parse_mode if cap else None))
-        elif m.media_type == "animation":
-            items.append(InputMediaAnimation(media=src, caption=cap, parse_mode=parse_mode if cap else None))
-        elif m.media_type == "audio":
-            items.append(InputMediaAudio(media=src, caption=cap, parse_mode=parse_mode if cap else None))
-        else:  # document / voice (voice не входит в group по спеке TG, но fallback на document)
-            items.append(InputMediaDocument(media=src, caption=cap, parse_mode=parse_mode if cap else None))
+    def _build_items(force_disk: bool):
+        out = []
+        for m in media_rows:
+            src = _media_input(m, force_disk=force_disk)
+            cap = m.caption  # per-item caption
+            if m.media_type == "photo":
+                out.append(InputMediaPhoto(media=src, caption=cap, parse_mode=parse_mode if cap else None))
+            elif m.media_type == "video":
+                out.append(InputMediaVideo(media=src, caption=cap, parse_mode=parse_mode if cap else None))
+            elif m.media_type == "animation":
+                out.append(InputMediaAnimation(media=src, caption=cap, parse_mode=parse_mode if cap else None))
+            elif m.media_type == "audio":
+                out.append(InputMediaAudio(media=src, caption=cap, parse_mode=parse_mode if cap else None))
+            else:  # document / voice (voice не входит в group по спеке TG, но fallback на document)
+                out.append(InputMediaDocument(media=src, caption=cap, parse_mode=parse_mode if cap else None))
+        return out
 
-    sent_messages = await aio_bot.send_media_group(chat_id, media=items)
+    try:
+        sent_messages = await aio_bot.send_media_group(chat_id, media=_build_items(force_disk=False))
+    except Exception as e:  # noqa: BLE001
+        if any(m.telegram_file_id for m in media_rows) and _is_bad_file_id_error(e):
+            logger.warning(
+                "media_group.stale_file_id — retrying %d items from disk",
+                len(media_rows),
+            )
+            for m in media_rows:
+                if m.telegram_file_id:
+                    await _reset_file_id(session, m.id)
+                    m.telegram_file_id = None
+            sent_messages = await aio_bot.send_media_group(chat_id, media=_build_items(force_disk=True))
+        else:
+            raise
+
     # Сохраняем file_id для каждого ответа
     for media_row, sent in zip(media_rows, sent_messages):
         fid = _extract_file_id(sent, media_row.media_type)
