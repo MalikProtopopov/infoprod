@@ -54,15 +54,19 @@ async def test_stop_when_no_runners():
 
 @pytest.mark.asyncio
 async def test_stop_cancels_runner_task(monkeypatch):
-    """stop() отменяет задачу runner'а и удаляет из _runners."""
+    """stop() отменяет задачу runner'а и удаляет из _runners.
+
+    Важно: stop_polling() НЕ вызывается для отдельного бота — Dispatcher
+    shared между всеми ботами, остановка polling одного бота не должна
+    ронять других. Вместо этого отменяется asyncio.Task через task.cancel().
+    """
     fake_bot = MagicMock()
     fake_bot.session.close = AsyncMock()
 
     fake_dp = MagicMock()
     fake_dp.stop_polling = AsyncMock()
 
-    # Реальная asyncio.Task, которая ждёт sleep — её можно отменить
-    # Используем AsyncMock task: cancel() noop, await не блокирует
+    # Используем MagicMock task: cancel() noop, await не блокирует
     task = MagicMock()
     task.cancel = MagicMock()
     # await task — нужен awaitable. Используем done future.
@@ -74,7 +78,11 @@ async def test_stop_cancels_runner_task(monkeypatch):
 
     await manager.stop()
     assert len(manager._runners) == 0
-    fake_dp.stop_polling.assert_awaited()
+    # task.cancel() должен быть вызван — это единственный способ остановки
+    task.cancel.assert_called_once()
+    # stop_polling() НЕ должен вызываться: Dispatcher shared, его нельзя
+    # останавливать при деактивации одного бота из нескольких
+    fake_dp.stop_polling.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -10,7 +10,9 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    KeyboardButton,
     Message,
+    ReplyKeyboardMarkup,
 )
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,6 +41,27 @@ router = Router(name="public")
 
 # TTL контекста ссылки между /start и нажатием «Оставить заявку»
 CURRENT_LINK_TTL = timedelta(minutes=30)
+
+# Текст кнопки reply-keyboard (должен совпадать с тем, что видит пользователь)
+MAIN_MENU_BTN = "🏠 Главное меню"
+
+
+def _main_reply_kb() -> ReplyKeyboardMarkup:
+    """Постоянная reply-клавиатура с кнопкой быстрого возврата в каталог."""
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text=MAIN_MENU_BTN)]],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def _nav_inline_kb() -> InlineKeyboardMarkup:
+    """Минимальная inline-клавиатура с одной кнопкой «Главное меню»."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main")]
+        ]
+    )
 
 
 async def _resolve_bot_id(session: AsyncSession, aiogram_bot: Bot) -> int | None:
@@ -122,7 +145,8 @@ async def _set_current_link(session: AsyncSession, user_id: int, tracking_link_i
 def _product_kb(product_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📝 Оставить заявку", callback_data=f"lead:{product_id}")]
+            [InlineKeyboardButton(text="📝 Оставить заявку", callback_data=f"lead:{product_id}")],
+            [InlineKeyboardButton(text="‹ К каталогу", callback_data="menu:main")],
         ]
     )
 
@@ -147,11 +171,25 @@ async def _send_product_card(target: Message | CallbackQuery, product: Product) 
     await msg.answer(text, reply_markup=_product_kb(product.id), parse_mode=ParseMode.HTML)
 
 
-async def _send_catalog(target: Message, products: list[Product]) -> None:
+async def _send_catalog(target: Message, products: list[Product], *, setup_nav: bool = False) -> None:
+    """Показать каталог продуктов.
+
+    setup_nav=True — отправить два сообщения: сначала WELCOME с reply-клавиатурой
+    (устанавливает постоянную кнопку «🏠 Главное меню»), затем сам каталог.
+    Используется при /start и аналогичных точках входа, где пользователь видит
+    бот впервые или сбросил контекст.
+    При setup_nav=False — одно сообщение с inline-каталогом (для навигации изнутри бота).
+    """
     if not products:
         await target.answer(texts.NO_PRODUCTS)
         return
-    await target.answer(texts.WELCOME, reply_markup=_catalog_kb(products))
+    if setup_nav:
+        # Устанавливаем reply-клавиатуру на приветственном сообщении,
+        # а каталог шлём отдельным — иначе нельзя совместить оба reply_markup.
+        await target.answer(texts.WELCOME, reply_markup=_main_reply_kb())
+        await target.answer(texts.CATALOG_HEADER, reply_markup=_catalog_kb(products))
+    else:
+        await target.answer(texts.CATALOG_HEADER, reply_markup=_catalog_kb(products))
 
 
 # ===================== /start =====================
@@ -241,7 +279,7 @@ async def start_with_arg(m: Message, command: CommandObject, bot: Bot) -> None:
                 select(Product).where(Product.is_active.is_(True)).order_by(Product.id.desc())
             )
         ).scalars().all()
-        await _send_catalog(m, products)
+        await _send_catalog(m, products, setup_nav=True)
 
 
 @router.message(CommandStart())
@@ -264,7 +302,7 @@ async def start_plain(m: Message, bot: Bot) -> None:
                 select(Product).where(Product.is_active.is_(True)).order_by(Product.id.desc())
             )
         ).scalars().all()
-    await _send_catalog(m, products)
+    await _send_catalog(m, products, setup_nav=True)
 
 
 # ===================== /help, /my =====================
@@ -294,10 +332,13 @@ async def cmd_my(m: Message) -> None:
             )
         ).all()
         if not rows:
-            await m.answer(texts.NO_SUBSCRIPTIONS)
+            await m.answer(texts.NO_SUBSCRIPTIONS, reply_markup=_nav_inline_kb())
             return
         lines = [texts.my_subscriptions_line(ch.title, sub.ends_at, sub.status) for sub, ch in rows]
-        await m.answer("Ваши активные подписки:\n" + "\n".join(lines))
+        await m.answer(
+            "Ваши активные подписки:\n" + "\n".join(lines),
+            reply_markup=_nav_inline_kb(),
+        )
 
 
 # ===================== Callbacks =====================
@@ -374,7 +415,10 @@ async def cb_lead(cb: CallbackQuery) -> None:
 
         await session.commit()
 
-    await cb.message.answer(texts.LEAD_SENT)
+    # Если воронка не стартует — показываем навигацию, чтобы не было тупика.
+    # Если стартует — D0 воронки сам придёт следующим сообщением, меню лишнее.
+    lead_kb = None if new_entry_id is not None else _nav_inline_kb()
+    await cb.message.answer(texts.LEAD_SENT, reply_markup=lead_kb)
     await cb.answer("Заявка отправлена")
     if new_entry_id is not None:
         await _flush_funnel_entry_now(new_entry_id)
@@ -385,35 +429,54 @@ async def cb_lead(cb: CallbackQuery) -> None:
 
 def _flow_buttons_to_markup(
     buttons: list[list[dict]] | None,
+    *,
+    append_main_menu: bool = False,
 ) -> InlineKeyboardMarkup | None:
     """Преобразует двумерный массив кнопок (формат FunnelStep.buttons /
-    FlowMessage.buttons) в aiogram InlineKeyboardMarkup. Возвращает None,
-    если кнопок нет."""
-    if not buttons:
-        return None
+    FlowMessage.buttons) в aiogram InlineKeyboardMarkup.
+
+    append_main_menu=True — добавляет кнопку «🏠 Главное меню» последней строкой,
+    если её ещё нет среди существующих кнопок. Возвращает None, если кнопок нет."""
     rows: list[list[InlineKeyboardButton]] = []
-    for row in buttons:
-        if not row:
-            continue
-        line: list[InlineKeyboardButton] = []
-        for b in row:
-            text = (b.get("text") or "").strip()
-            if not text:
+    has_main_menu = False
+    if buttons:
+        for row in buttons:
+            if not row:
                 continue
-            url = b.get("url")
-            cd = b.get("callback_data")
-            if url:
-                line.append(InlineKeyboardButton(text=text, url=url))
-            elif cd:
-                line.append(InlineKeyboardButton(text=text, callback_data=cd))
-        if line:
-            rows.append(line)
+            line: list[InlineKeyboardButton] = []
+            for b in row:
+                text = (b.get("text") or "").strip()
+                if not text:
+                    continue
+                url = b.get("url")
+                cd = b.get("callback_data")
+                if cd == "menu:main":
+                    has_main_menu = True
+                if url:
+                    line.append(InlineKeyboardButton(text=text, url=url))
+                elif cd:
+                    line.append(InlineKeyboardButton(text=text, callback_data=cd))
+            if line:
+                rows.append(line)
+    if append_main_menu and not has_main_menu:
+        rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
-async def _send_flow_messages(target: Message, msgs: list[FlowMessage]) -> None:
+async def _send_flow_messages(
+    target: Message,
+    msgs: list[FlowMessage],
+    *,
+    append_main_menu: bool = True,
+) -> None:
+    """Отправить список FlowMessage пользователю.
+
+    append_main_menu=True (по умолчанию) — к каждому сообщению добавляется
+    кнопка «🏠 Главное меню» если её ещё нет. Это даёт пользователю
+    способ выйти из любой воронки / квиза / формы без знания команд.
+    """
     for msg in msgs:
-        kb = _flow_buttons_to_markup(msg.buttons)
+        kb = _flow_buttons_to_markup(msg.buttons, append_main_menu=append_main_menu)
         await target.answer(msg.text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
 
@@ -442,9 +505,38 @@ async def _flush_funnel_entry_now(entry_id: int) -> int:
 
 @router.message(F.text & ~F.text.startswith("/"))
 async def on_text_message(m: Message, bot: Bot) -> None:
-    """Резолв активной формы → кодовые слова → пропуск."""
+    """Резолв активной формы → кодовые слова → пропуск.
+
+    Приоритет 0: reply-кнопка «🏠 Главное меню» — отменяет активную форму
+    и возвращает каталог из любого контекста.
+    """
     text = (m.text or "").strip()
     if not text:
+        return
+
+    # ── 0) Постоянная кнопка навигации ──────────────────────────────────────
+    if text == MAIN_MENU_BTN:
+        async with SessionLocal() as session:
+            user, is_new = await _upsert_user(session, m)
+            if is_new:
+                our_bot_id = await _resolve_bot_id(session, bot)
+                await _set_first_touch(
+                    session, user_id=user.id, bot_id=our_bot_id,
+                    product_id=None, tracking_link=None,
+                )
+            flow = StepFlowService(session)
+            # Отменяем любую активную форму — пользователь явно хочет выйти
+            active_form = await flow.get_active(user.id, "form")
+            if active_form is not None:
+                await flow.cancel_form(user_id=user.id, state_id=active_form.id)
+                await m.answer(texts.FORM_CANCELLED_NAV)
+            await session.commit()
+            products = (
+                await session.execute(
+                    select(Product).where(Product.is_active.is_(True)).order_by(Product.id.desc())
+                )
+            ).scalars().all()
+        await m.answer(texts.CATALOG_HEADER, reply_markup=_catalog_kb(list(products)))
         return
 
     async with SessionLocal() as session:
@@ -508,7 +600,11 @@ async def on_text_message(m: Message, bot: Bot) -> None:
 
 @router.callback_query(F.data == "menu:main")
 async def cb_main_menu(cb: CallbackQuery) -> None:
-    """Показать каталог продуктов (то же, что /start без параметров)."""
+    """Показать каталог продуктов (то же, что /start без параметров).
+
+    Reply-клавиатура уже должна быть у пользователя после первого /start;
+    здесь достаточно показать только inline-каталог.
+    """
     async with SessionLocal() as session:
         await _upsert_user(session, cb)
         await session.commit()
@@ -520,7 +616,7 @@ async def cb_main_menu(cb: CallbackQuery) -> None:
     if not products:
         await cb.message.answer(texts.NO_PRODUCTS)
     else:
-        await cb.message.answer(texts.WELCOME, reply_markup=_catalog_kb(list(products)))
+        await cb.message.answer(texts.CATALOG_HEADER, reply_markup=_catalog_kb(list(products)))
     await cb.answer()
 
 
@@ -703,7 +799,7 @@ async def cb_unsubscribe(cb: CallbackQuery) -> None:
         user.notifications_enabled = False
         await session.commit()
 
-    await cb.message.answer(texts.UNSUBSCRIBED)
+    await cb.message.answer(texts.UNSUBSCRIBED, reply_markup=_nav_inline_kb())
     await cb.answer()
 
 
