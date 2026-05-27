@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.helpers import payment_form
+
 
 @pytest.fixture
 def mock_tg(monkeypatch):
@@ -25,7 +27,7 @@ async def test_create_payment_auto_marks_open_lead_as_paid(
 
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": product.id, "period_months": 3},
+        **payment_form(user_id= user.id, product_id= product.id, period_months= 3),
     )
     assert r.status_code == 201
 
@@ -44,7 +46,7 @@ async def test_create_payment_for_period_6(admin_client, make_committed, mock_tg
     product = await make_committed.product(price_3m=1000, price_6m=1800)
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": product.id, "period_months": 6},
+        **payment_form(user_id= user.id, product_id= product.id, period_months= 6),
     )
     assert r.status_code == 201
     assert r.json()["amount"] == "1800.00"
@@ -56,7 +58,7 @@ async def test_create_payment_for_period_12(admin_client, make_committed, mock_t
     product = await make_committed.product(price_12m=2999)
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": product.id, "period_months": 12},
+        **payment_form(user_id= user.id, product_id= product.id, period_months= 12),
     )
     assert r.status_code == 201
     assert r.json()["amount"] == "2999.00"
@@ -80,7 +82,7 @@ async def test_create_payment_inherits_tracking_link_from_open_lead(
 
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": product.id, "period_months": 3},
+        **payment_form(user_id= user.id, product_id= product.id, period_months= 3),
     )
     assert r.status_code == 201
     pid = r.json()["id"]
@@ -97,10 +99,7 @@ async def test_create_payment_with_comment(admin_client, make_committed, mock_tg
     product = await make_committed.product()
     r = await admin_client.post(
         "/api/payments",
-        json={
-            "user_id": user.id, "product_id": product.id,
-            "period_months": 3, "comment": "from email follow-up",
-        },
+        **payment_form(user_id= user.id, product_id= product.id, period_months= 3, comment= "from email follow-up"),
     )
     assert r.status_code == 201
 

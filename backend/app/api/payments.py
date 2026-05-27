@@ -5,7 +5,7 @@ import uuid
 from decimal import Decimal
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,7 +19,7 @@ from app.models.payment_receipt import PaymentReceipt
 from app.models.product import Product
 from app.models.subscription import Subscription
 from app.models.user import User
-from app.schemas.payment import PaymentCreate, PaymentOut, PaymentUpdate, ReceiptOut
+from app.schemas.payment import PaymentOut, PaymentUpdate, ReceiptOut
 from app.services import subscriptions as sub_service
 
 router = APIRouter(prefix="/payments", tags=["payments"])
@@ -111,17 +111,30 @@ async def list_payments(
 
 @router.post("", response_model=PaymentOut, status_code=201)
 async def create_payment(
-    payload: PaymentCreate,
+    user_id: int = Form(...),
+    product_id: int = Form(...),
+    period_months: int = Form(...),
+    amount: str | None = Form(None),
+    comment: str | None = Form(None),
+    # Чек обязателен: платёж нельзя создать без подтверждения оплаты.
+    # Атомарно с созданием платежа — нет платежа без чека даже через API.
+    receipts: list[UploadFile] = File(...),
     admin: Admin = Depends(current_admin),
     session: AsyncSession = Depends(get_session),
 ) -> PaymentOut:
+    if period_months not in (3, 6, 12):
+        raise HTTPException(status_code=422, detail="Период должен быть 3, 6 или 12 месяцев")
+
+    # Проверяем и читаем чеки ДО любых side-effect'ов (выдача доступа/инвайт).
+    staged = await _read_receipts_or_422(receipts)
+
     user = (
-        await session.execute(select(User).where(User.id == payload.user_id))
+        await session.execute(select(User).where(User.id == user_id))
     ).scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=400, detail="Пользователь не найден")
     product = (
-        await session.execute(select(Product).where(Product.id == payload.product_id))
+        await session.execute(select(Product).where(Product.id == product_id))
     ).scalar_one_or_none()
     if not product:
         raise HTTPException(status_code=400, detail="Продукт не найден")
@@ -137,9 +150,15 @@ async def create_payment(
             detail="Бот канала неактивен или не запущен — невозможно выдать доступ. Активируйте бота в разделе «Боты».",
         )
 
-    if payload.amount is not None and payload.amount < 0:
-        raise HTTPException(status_code=422, detail="Сумма не может быть отрицательной")
-    amount = payload.amount if payload.amount is not None else _price_for_period(product, payload.period_months)
+    amount_dec: Decimal | None = None
+    if amount is not None and str(amount).strip() != "":
+        try:
+            amount_dec = Decimal(str(amount))
+        except Exception:
+            raise HTTPException(status_code=422, detail="Некорректная сумма")
+        if amount_dec < 0:
+            raise HTTPException(status_code=422, detail="Сумма не может быть отрицательной")
+    final_amount = amount_dec if amount_dec is not None else _price_for_period(product, period_months)
 
     # Last-touch атрибуция платежа: наследуется от самой свежей заявки этой пары user+product
     # (если таковая есть и в ней проставлен tracking_link_id)
@@ -160,10 +179,10 @@ async def create_payment(
     payment = Payment(
         user_id=user.id,
         product_id=product.id,
-        period_months=payload.period_months,
-        amount=amount,
+        period_months=period_months,
+        amount=final_amount,
         currency=product.currency,
-        comment=payload.comment,
+        comment=comment,
         admin_id=admin.id,
         tracking_link_id=last_lead_tl,
     )
@@ -200,19 +219,22 @@ async def create_payment(
         user_id=user.id, product_id=product.id,
     )
 
+    # Сохраняем чеки на диск + строки (в той же транзакции — атомарно с платежом).
+    receipt_rows = _save_staged_receipts(session, payment.id, admin.id, staged)
+
     # Audit
     from app.services.audit import log_action
     await log_action(
         session, admin_id=admin.id, action="create",
         resource_type="payment", resource_id=payment.id,
         summary=f"Payment {payment.amount} {payment.currency} за {payment.period_months} мес. для user_id={payment.user_id}",
-        payload={"product_id": payment.product_id, "amount": str(payment.amount), "period_months": payment.period_months},
+        payload={"product_id": payment.product_id, "amount": str(payment.amount), "period_months": payment.period_months, "receipts": len(receipt_rows)},
     )
 
     await session.commit()
     await session.refresh(payment)
 
-    return _to_out(payment, user, product.name)
+    return _to_out(payment, user, product.name, receipt_rows)
 
 
 @router.patch("/{payment_id}", response_model=PaymentOut)
@@ -271,6 +293,58 @@ def _resolve_receipt_mime(file: UploadFile) -> str | None:
         if name.endswith(ext):
             return m
     return None
+
+
+async def _read_receipts_or_422(files: list[UploadFile]) -> list[tuple[str | None, str, bytes]]:
+    """Валидирует и читает чеки. Требует ≥1, ≤MAX_RECEIPTS. 422/413/415 при проблемах."""
+    real = [f for f in files if f is not None and f.filename]
+    if not real:
+        raise HTTPException(
+            status_code=422, detail="Чек обязателен — приложите подтверждение оплаты"
+        )
+    if len(real) > MAX_RECEIPTS:
+        raise HTTPException(status_code=422, detail=f"Не более {MAX_RECEIPTS} чеков")
+    staged: list[tuple[str | None, str, bytes]] = []
+    for f in real:
+        mime = _resolve_receipt_mime(f)
+        if mime is None:
+            raise HTTPException(
+                status_code=415,
+                detail="Чек: допустимы изображения (jpg/png/webp/gif) или PDF",
+            )
+        content = await f.read()
+        if not content:
+            raise HTTPException(status_code=422, detail="Пустой файл чека")
+        if len(content) > RECEIPT_MAX_BYTES:
+            raise HTTPException(
+                status_code=413, detail=f"Чек больше {RECEIPT_MAX_BYTES // (1024 * 1024)} МБ"
+            )
+        staged.append((f.filename, mime, content))
+    return staged
+
+
+def _save_staged_receipts(
+    session: AsyncSession, payment_id: int, admin_id: int | None,
+    staged: list[tuple[str | None, str, bytes]],
+) -> list[PaymentReceipt]:
+    """Пишет файлы на диск и создаёт строки PaymentReceipt (без commit)."""
+    pdir = RECEIPTS_DIR / str(payment_id)
+    pdir.mkdir(parents=True, exist_ok=True)
+    rows: list[PaymentReceipt] = []
+    for filename, mime, content in staged:
+        dst = pdir / f"{uuid.uuid4().hex}{_EXT_BY_MIME.get(mime, '')}"
+        dst.write_bytes(content)
+        rec = PaymentReceipt(
+            payment_id=payment_id,
+            storage_path=str(dst),
+            original_filename=filename,
+            mime_type=mime,
+            file_size=len(content),
+            uploaded_by=admin_id,
+        )
+        session.add(rec)
+        rows.append(rec)
+    return rows
 
 
 @router.get("/{payment_id}/receipts", response_model=list[ReceiptOut])

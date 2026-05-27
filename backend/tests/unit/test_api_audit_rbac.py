@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import pytest
 
+from tests.helpers import payment_form
+
 
 @pytest.mark.asyncio
 async def test_audit_log_list_empty(admin_client, clean_db):
@@ -34,7 +36,7 @@ async def test_audit_log_records_payment_creation(
     product = await make_committed.product()
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": product.id, "period_months": 3},
+        **payment_form(user_id= user.id, product_id= product.id, period_months= 3),
     )
     assert r.status_code == 201
 

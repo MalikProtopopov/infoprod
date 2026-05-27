@@ -17,6 +17,7 @@ import asyncio
 asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
 
 import os
+import tempfile
 from pathlib import Path
 from typing import AsyncIterator, Iterator
 
@@ -33,6 +34,9 @@ os.environ.setdefault("JWT_SECRET", "test-secret-32-chars-aaaaaaaaaaaaaaaa")
 os.environ.setdefault("ADMIN_PASSWORD", "testpass")
 os.environ.setdefault("ENV", "test")
 os.environ.setdefault("SENTRY_DSN", "")  # выключаем Sentry в тестах
+# Файловое хранилище в тестах — во временную папку (прод-путь /var/lib не пишется).
+os.environ.setdefault("RECEIPTS_DIR", tempfile.mkdtemp(prefix="test-receipts-"))
+os.environ.setdefault("STEP_MEDIA_DIR", tempfile.mkdtemp(prefix="test-stepmedia-"))
 
 
 # ---------- session-level: один Postgres контейнер ----------

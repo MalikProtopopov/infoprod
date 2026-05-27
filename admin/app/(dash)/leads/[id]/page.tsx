@@ -207,6 +207,7 @@ function PaymentModal({
   const [linkId, setLinkId] = useState<number | ''>('');
   const [period, setPeriod] = useState<3 | 6 | 12>(3);
   const [amount, setAmount] = useState('');
+  const [receipt, setReceipt] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -222,9 +223,14 @@ function PaymentModal({
         if (!linkId) { setError('Выберите платёж'); setBusy(false); return; }
         paymentId = Number(linkId);
       } else {
-        const body: Record<string, unknown> = { user_id: lead.user_id, product_id: lead.product_id, period_months: period };
-        if (amount.trim()) body.amount = amount.trim();
-        const created = await api.post<Payment>('/payments', body);
+        if (!receipt) { setError('Приложите чек — он обязателен'); setBusy(false); return; }
+        const form = new FormData();
+        form.append('user_id', String(lead.user_id));
+        form.append('product_id', String(lead.product_id));
+        form.append('period_months', String(period));
+        if (amount.trim()) form.append('amount', amount.trim());
+        form.append('receipts', receipt);
+        const created = await api.postForm<Payment>('/payments', form);
         paymentId = created.id;
       }
       await api.patch(`/leads/${lead.id}`, { status: targetStatus, payment_id: paymentId });
@@ -243,7 +249,7 @@ function PaymentModal({
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>Отмена</Button>
-          <Button onClick={confirm} disabled={busy}>{busy ? '…' : 'Подтвердить'}</Button>
+          <Button onClick={confirm} disabled={busy || (effMode === 'create' && !receipt)}>{busy ? '…' : 'Подтвердить'}</Button>
         </>
       }
     >
@@ -283,6 +289,24 @@ function PaymentModal({
             </Field>
             <Field label="Сумма" hint="Пусто = цена продукта за период">
               <Input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="напр. 2990" inputMode="decimal" />
+            </Field>
+            <Field label="Чек" hint="Обязательно — подтверждение оплаты" required>
+              {receipt ? (
+                <div className="flex items-center gap-2 text-sm bg-zinc-100 rounded-lg pl-2 pr-1 py-1 w-fit">
+                  <span className="max-w-[200px] truncate">{receipt.name}</span>
+                  <button type="button" onClick={() => setReceipt(null)} className="size-4 inline-flex items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-200" aria-label="Убрать">×</button>
+                </div>
+              ) : (
+                <label className="inline-flex items-center gap-2 cursor-pointer">
+                  <span className="inline-flex items-center justify-center h-9 px-4 rounded-xl glass-soft text-ink text-sm font-medium hover:bg-white/80 transition">+ Прикрепить чек</span>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+                    className="hidden"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) setReceipt(f); e.target.value = ''; }}
+                  />
+                </label>
+              )}
             </Field>
           </>
         )}

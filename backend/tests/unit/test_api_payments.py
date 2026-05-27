@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.helpers import payment_form
+
 
 @pytest.fixture
 def mock_tg(monkeypatch):
@@ -28,12 +30,25 @@ async def test_create_payment_with_default_amount(admin_client, make_committed, 
 
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": product.id, "period_months": 3},
+        **payment_form(user_id=user.id, product_id=product.id, period_months=3),
     )
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["period_months"] == 3
     assert body["amount"] == "1500.00"
+    assert len(body["receipts"]) == 1  # чек приложен и сохранён
+
+
+@pytest.mark.asyncio
+async def test_create_payment_requires_receipt(admin_client, make_committed, mock_tg, clean_db):
+    """Без чека платёж не создаётся → 422 (защита от накрутки)."""
+    product = await make_committed.product()
+    user = await make_committed.user()
+    r = await admin_client.post(
+        "/api/payments",
+        **payment_form(with_receipt=False, user_id=user.id, product_id=product.id, period_months=3),
+    )
+    assert r.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -42,7 +57,7 @@ async def test_create_payment_with_custom_amount(admin_client, make_committed, m
     user = await make_committed.user()
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": product.id, "period_months": 6, "amount": "999"},
+        **payment_form(user_id=user.id, product_id=product.id, period_months=6, amount="999"),
     )
     assert r.status_code == 201
     assert r.json()["amount"] == "999.00"
@@ -54,7 +69,7 @@ async def test_create_payment_negative_amount_returns_422(admin_client, make_com
     user = await make_committed.user()
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": product.id, "period_months": 3, "amount": "-100"},
+        **payment_form(user_id=user.id, product_id=product.id, period_months=3, amount="-100"),
     )
     assert r.status_code == 422
 
@@ -64,7 +79,7 @@ async def test_create_payment_unknown_user(admin_client, make_committed, clean_d
     product = await make_committed.product()
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": 99999, "product_id": product.id, "period_months": 3},
+        **payment_form(user_id=99999, product_id=product.id, period_months=3),
     )
     assert r.status_code == 400
 
@@ -74,7 +89,7 @@ async def test_create_payment_unknown_product(admin_client, make_committed, clea
     user = await make_committed.user()
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": 99999, "period_months": 3},
+        **payment_form(user_id=user.id, product_id=99999, period_months=3),
     )
     assert r.status_code == 400
 
@@ -85,7 +100,7 @@ async def test_create_payment_invalid_period(admin_client, make_committed, clean
     product = await make_committed.product()
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": product.id, "period_months": 1},
+        **payment_form(user_id=user.id, product_id=product.id, period_months=1),
     )
     assert r.status_code == 422
 
@@ -97,7 +112,7 @@ async def test_create_payment_no_active_bot_returns_409(admin_client, make_commi
     product = await make_committed.product()
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": product.id, "period_months": 3},
+        **payment_form(user_id=user.id, product_id=product.id, period_months=3),
     )
     assert r.status_code == 409
 

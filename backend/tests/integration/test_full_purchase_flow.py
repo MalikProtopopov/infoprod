@@ -14,6 +14,8 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+from tests.helpers import payment_form
 from sqlalchemy import text
 
 
@@ -93,7 +95,7 @@ async def test_full_purchase_flow(
     _patch_tg(monkeypatch)
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": product.id, "period_months": 3},
+        **payment_form(user_id= user.id, product_id= product.id, period_months= 3),
     )
     assert r.status_code == 201, r.text
     payment_id = r.json()["id"]
@@ -150,7 +152,7 @@ async def test_payment_creation_rejects_inactive_bot(
 
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": product.id, "period_months": 3},
+        **payment_form(user_id= user.id, product_id= product.id, period_months= 3),
     )
     assert r.status_code == 409
     assert "неактивен" in r.json()["detail"].lower() or "невозможно" in r.json()["detail"].lower()

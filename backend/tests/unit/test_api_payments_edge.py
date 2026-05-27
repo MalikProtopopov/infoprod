@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.helpers import payment_form
+
 
 @pytest.fixture
 def mock_tg(monkeypatch):
@@ -32,7 +34,7 @@ async def test_create_payment_inherits_tracking_link_from_open_lead(
 
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": product.id, "period_months": 3},
+        **payment_form(user_id= user.id, product_id= product.id, period_months= 3),
     )
     assert r.status_code == 201
     pid = r.json()["id"]
@@ -54,7 +56,7 @@ async def test_create_payment_no_user_lead_no_inherit(
 
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": product.id, "period_months": 3},
+        **payment_form(user_id= user.id, product_id= product.id, period_months= 3),
     )
     assert r.status_code == 201
     pid = r.json()["id"]
@@ -92,7 +94,7 @@ async def test_create_payment_when_already_paid_lead_exists(
 
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": product.id, "period_months": 3},
+        **payment_form(user_id= user.id, product_id= product.id, period_months= 3),
     )
     assert r.status_code == 201
 
@@ -114,7 +116,7 @@ async def test_create_payment_returns_admin_id_set(
     product = await make_committed.product()
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": product.id, "period_months": 3},
+        **payment_form(user_id= user.id, product_id= product.id, period_months= 3),
     )
     pid = r.json()["id"]
 
@@ -134,14 +136,12 @@ async def test_create_payment_explicit_period_6m_uses_price_6m(
     product = await make_committed.product(price_3m=100, price_6m=200, price_12m=300)
     r = await admin_client.post(
         "/api/payments",
-        json={"user_id": user.id, "product_id": product.id, "period_months": 6},
+        **payment_form(user_id= user.id, product_id= product.id, period_months= 6),
     )
     assert r.json()["amount"] == "200.00"
 
 
 @pytest.mark.asyncio
 async def test_create_payment_requires_auth(api_client):
-    r = await api_client.post("/api/payments", json={
-        "user_id": 1, "product_id": 1, "period_months": 3,
-    })
+    r = await api_client.post("/api/payments", **payment_form(user_id= 1, product_id= 1, period_months= 3))
     assert r.status_code == 401

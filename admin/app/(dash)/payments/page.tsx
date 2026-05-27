@@ -94,29 +94,19 @@ export default function PaymentsPage() {
   }
 
   async function save() {
-    if (!pickedUser) return;
+    if (!pickedUser || newReceipts.length === 0) return;
     setBusy(true); setError(null);
     try {
-      const created = await api.post<{ id: number }>('/payments', {
-        user_id: pickedUser.id,
-        product_id: Number(productId),
-        period_months: period,
-        amount: amount || null,
-        comment: comment || null,
-      });
-      // Платёж создан — теперь подгружаем выбранные чеки (нужен payment_id).
-      let failed = 0;
-      for (const f of newReceipts.slice(0, MAX_RECEIPTS)) {
-        try {
-          const form = new FormData();
-          form.append('file', f);
-          await api.postForm(`/payments/${created.id}/receipts`, form);
-        } catch { failed += 1; }
-      }
+      // Чек обязателен и создаётся атомарно с платежом — один multipart-запрос.
+      const form = new FormData();
+      form.append('user_id', String(pickedUser.id));
+      form.append('product_id', String(productId));
+      form.append('period_months', String(period));
+      if (amount) form.append('amount', amount);
+      if (comment) form.append('comment', comment);
+      for (const f of newReceipts.slice(0, MAX_RECEIPTS)) form.append('receipts', f);
+      await api.postForm('/payments', form);
       setOpen(false); mutate();
-      if (failed > 0) {
-        alert(`Платёж создан, но ${failed} чек(ов) не загрузились. Добавьте их через колонку «Чек».`);
-      }
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   }
@@ -185,7 +175,7 @@ export default function PaymentsPage() {
         footer={
           <>
             <Button variant="ghost" onClick={() => setOpen(false)}>Отмена</Button>
-            <Button onClick={save} disabled={busy || !pickedUser || !productId}>
+            <Button onClick={save} disabled={busy || !pickedUser || !productId || newReceipts.length === 0}>
               {busy ? '…' : 'Сохранить'}
             </Button>
           </>
@@ -223,7 +213,10 @@ export default function PaymentsPage() {
           <Field label="Комментарий">
             <Input value={comment} onChange={(e) => setComment(e.target.value)} />
           </Field>
-          <Field label="Чек (необязательно)" hint="До 3 файлов: jpg/png/webp/gif или PDF. Можно добавить и позже из колонки «Чек».">
+          <Field label="Чек" hint="Обязательно — подтверждение оплаты. До 3 файлов: jpg/png/webp/gif или PDF." required>
+            {newReceipts.length === 0 && (
+              <p className="text-xs text-amber-700 mb-2">Без чека платёж создать нельзя.</p>
+            )}
             {newReceipts.length > 0 && (
               <div className="flex flex-wrap gap-2 mb-2">
                 {newReceipts.map((f, i) => (
