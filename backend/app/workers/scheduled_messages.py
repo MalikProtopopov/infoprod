@@ -17,6 +17,7 @@ import structlog
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.features import is_enabled
 from app.models.funnel import Funnel
 from app.models.funnel_entry import FunnelEntry
 from app.models.funnel_step import FunnelStep
@@ -429,7 +430,7 @@ async def process_due_messages(
                     reply_markup=keyboard,
                     disable_web_page_preview=True,
                 )
-                if step.lead_magnet_id:
+                if step.lead_magnet_id and is_enabled("lead_magnets"):
                     await lm_svc.send_to_user(
                         bot=aio_bot,
                         user_telegram_id=user.telegram_user_id,

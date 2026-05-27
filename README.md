@@ -24,6 +24,14 @@ docker compose up -d --build
 - `admin/` — Next.js 15 (standalone).
 - `nginx/` — обратный прокси и TLS.
 
+## Модульность (фичефлаги)
+Фичи (воронки, лидмагниты, квизы, формы, аналитика…) включаются/выключаются на
+клиента через `.env` — по одной переменной `FEATURE_<KEY>` (дефолт = всё включено).
+Гейтинг рантаймовый: один образ обслуживает всех клиентов. Реестр и зависимости —
+`backend/app/core/features.py`, эффективный набор отдаётся фронту через
+`GET /api/config/features`. Подробно — `docs/plans/07_modular_feature_flags.md`;
+список ключей и примеры — в `.env.example`.
+
 ## Документация
 - ТЗ: `docs/TZ_Client.docx`, конвертация в md: `docs/TZ_Client.md`.
 - Планы: `docs/plans/`.

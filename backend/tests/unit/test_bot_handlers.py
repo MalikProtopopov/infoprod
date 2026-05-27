@@ -160,8 +160,12 @@ async def test_start_with_slug_resolves_tracking_link(session, make, monkeypatch
     link = await make.tracking_link(slug="mySlug12", product=product, utm_source="ig")
     await session.commit()
 
-    from app.bot import handlers as h
-    monkeypatch.setattr(h, "SessionLocal", _make_test_sessionmaker(session))
+    # Хендлеры разнесены по сабмодулям; SessionLocal патчим в обоих,
+    # где он используется (core: /start, leads: cb_lead).
+    from app.bot.handlers import core as _hc, leads as _hl
+    _sm = _make_test_sessionmaker(session)
+    monkeypatch.setattr(_hc, "SessionLocal", _sm)
+    monkeypatch.setattr(_hl, "SessionLocal", _sm)
 
     msg = _make_message(tg_id=999)
     cmd = _make_command("mySlug12")
@@ -188,8 +192,12 @@ async def test_start_with_invalid_slug_shows_expired_message(session, make, monk
     await make.product(channel=await make.channel(bot=bot_model))
     await session.commit()
 
-    from app.bot import handlers as h
-    monkeypatch.setattr(h, "SessionLocal", _make_test_sessionmaker(session))
+    # Хендлеры разнесены по сабмодулям; SessionLocal патчим в обоих,
+    # где он используется (core: /start, leads: cb_lead).
+    from app.bot.handlers import core as _hc, leads as _hl
+    _sm = _make_test_sessionmaker(session)
+    monkeypatch.setattr(_hc, "SessionLocal", _sm)
+    monkeypatch.setattr(_hl, "SessionLocal", _sm)
 
     msg = _make_message(tg_id=999)
     cmd = _make_command("nosuchslug")
@@ -206,8 +214,12 @@ async def test_start_falls_back_to_product_code(session, make, monkeypatch):
     product = await make.product(code="yogapro", channel=await make.channel(bot=bot_model))
     await session.commit()
 
-    from app.bot import handlers as h
-    monkeypatch.setattr(h, "SessionLocal", _make_test_sessionmaker(session))
+    # Хендлеры разнесены по сабмодулям; SessionLocal патчим в обоих,
+    # где он используется (core: /start, leads: cb_lead).
+    from app.bot.handlers import core as _hc, leads as _hl
+    _sm = _make_test_sessionmaker(session)
+    monkeypatch.setattr(_hc, "SessionLocal", _sm)
+    monkeypatch.setattr(_hl, "SessionLocal", _sm)
 
     msg = _make_message(tg_id=999)
     cmd = _make_command("yogapro")
@@ -228,8 +240,12 @@ async def test_start_with_deactivated_link_shows_expired(session, make, monkeypa
     await make.tracking_link(slug="deadslug", product=product, is_active=False)
     await session.commit()
 
-    from app.bot import handlers as h
-    monkeypatch.setattr(h, "SessionLocal", _make_test_sessionmaker(session))
+    # Хендлеры разнесены по сабмодулям; SessionLocal патчим в обоих,
+    # где он используется (core: /start, leads: cb_lead).
+    from app.bot.handlers import core as _hc, leads as _hl
+    _sm = _make_test_sessionmaker(session)
+    monkeypatch.setattr(_hc, "SessionLocal", _sm)
+    monkeypatch.setattr(_hl, "SessionLocal", _sm)
 
     msg = _make_message(tg_id=999)
     cmd = _make_command("deadslug")
@@ -256,8 +272,12 @@ async def test_cb_lead_creates_lead_with_fresh_attribution(session, make, monkey
     )
     await session.commit()
 
-    from app.bot import handlers as h
-    monkeypatch.setattr(h, "SessionLocal", _make_test_sessionmaker(session))
+    # Хендлеры разнесены по сабмодулям; SessionLocal патчим в обоих,
+    # где он используется (core: /start, leads: cb_lead).
+    from app.bot.handlers import core as _hc, leads as _hl
+    _sm = _make_test_sessionmaker(session)
+    monkeypatch.setattr(_hc, "SessionLocal", _sm)
+    monkeypatch.setattr(_hl, "SessionLocal", _sm)
 
     cb = _make_callback(tg_id=777, data=f"lead:{product.id}")
     await cb_lead(cb)
@@ -283,8 +303,12 @@ async def test_cb_lead_ignores_expired_ttl(session, make, monkeypatch):
     )
     await session.commit()
 
-    from app.bot import handlers as h
-    monkeypatch.setattr(h, "SessionLocal", _make_test_sessionmaker(session))
+    # Хендлеры разнесены по сабмодулям; SessionLocal патчим в обоих,
+    # где он используется (core: /start, leads: cb_lead).
+    from app.bot.handlers import core as _hc, leads as _hl
+    _sm = _make_test_sessionmaker(session)
+    monkeypatch.setattr(_hc, "SessionLocal", _sm)
+    monkeypatch.setattr(_hl, "SessionLocal", _sm)
 
     cb = _make_callback(tg_id=778, data=f"lead:{product.id}")
     await cb_lead(cb)
@@ -309,8 +333,12 @@ async def test_cb_lead_with_deactivated_link_no_attribution(session, make, monke
     )
     await session.commit()
 
-    from app.bot import handlers as h
-    monkeypatch.setattr(h, "SessionLocal", _make_test_sessionmaker(session))
+    # Хендлеры разнесены по сабмодулям; SessionLocal патчим в обоих,
+    # где он используется (core: /start, leads: cb_lead).
+    from app.bot.handlers import core as _hc, leads as _hl
+    _sm = _make_test_sessionmaker(session)
+    monkeypatch.setattr(_hc, "SessionLocal", _sm)
+    monkeypatch.setattr(_hl, "SessionLocal", _sm)
 
     cb = _make_callback(tg_id=779, data=f"lead:{product.id}")
     await cb_lead(cb)

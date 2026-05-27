@@ -4,6 +4,7 @@ import { use, useEffect, useState } from 'react';
 import useSWR from 'swr';
 
 import { api, fetcher } from '@/lib/api';
+import { useFeatures } from '@/lib/features';
 import { Button, Card, Empty, Field, Input, PageHeader, Pill, Skeleton, Textarea } from '@/components/ui';
 
 type UserCard = {
@@ -50,6 +51,7 @@ type UserCard = {
 
 export default function UserPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const { isOn } = useFeatures();
   const { data, mutate } = useSWR<UserCard>(`/users/${id}`, fetcher);
   const [form, setForm] = useState({ phone: '', email: '', notes: '' });
   const [busy, setBusy] = useState(false);
@@ -127,9 +129,10 @@ export default function UserPage({ params }: { params: Promise<{ id: string }> }
         </Card>
       </div>
 
+      {isOn('monetization') && (
       <Card padded className="anim-rise">
         <h3 className="font-semibold mb-4">Подписки</h3>
-        {data.subscriptions.length === 0 ? <Empty>Подписок нет</Empty> : (
+        {(data.subscriptions ?? []).length === 0 ? <Empty>Подписок нет</Empty> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[680px]">
               <thead className="text-left text-xs uppercase tracking-wide text-zinc-500">
@@ -160,10 +163,12 @@ export default function UserPage({ params }: { params: Promise<{ id: string }> }
           </div>
         )}
       </Card>
+      )}
 
+      {isOn('monetization') && (
       <Card padded className="anim-rise">
         <h3 className="font-semibold mb-4">Платежи</h3>
-        {data.payments.length === 0 ? <Empty>Платежей нет</Empty> : (
+        {(data.payments ?? []).length === 0 ? <Empty>Платежей нет</Empty> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[680px]">
               <thead className="text-left text-xs uppercase tracking-wide text-zinc-500">
@@ -190,10 +195,12 @@ export default function UserPage({ params }: { params: Promise<{ id: string }> }
           </div>
         )}
       </Card>
+      )}
 
+      {isOn('leads') && (
       <Card padded className="anim-rise">
         <h3 className="font-semibold mb-4">Заявки</h3>
-        {data.leads.length === 0 ? <Empty>Заявок нет</Empty> : (
+        {(data.leads ?? []).length === 0 ? <Empty>Заявок нет</Empty> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[640px]">
               <thead className="text-left text-xs uppercase tracking-wide text-zinc-500">
@@ -218,8 +225,9 @@ export default function UserPage({ params }: { params: Promise<{ id: string }> }
           </div>
         )}
       </Card>
+      )}
 
-      <SubmissionsTimeline userId={Number(id)} />
+      {(isOn('quizzes') || isOn('forms')) && <SubmissionsTimeline userId={Number(id)} />}
     </div>
   );
 }

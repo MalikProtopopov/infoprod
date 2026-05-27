@@ -7,6 +7,7 @@ import clsx from 'clsx';
 import useSWR from 'swr';
 
 import { api, fetcher } from '@/lib/api';
+import { useFeatures, featureForPath, type FeatureKey } from '@/lib/features';
 
 type Me = { id: number; username: string; role?: string };
 type Overview = {
@@ -133,6 +134,7 @@ type NavItem = {
   href: string;
   label: string;
   icon: ReactNode;
+  feature?: FeatureKey;  // ключ фичефлага; если выключен — пункт скрыт
   badge?: (counts: NavCounts) => number | undefined;
 };
 
@@ -161,28 +163,28 @@ const NAV_GROUPS: NavGroup[] = [
     key: 'analytics',
     label: 'Аналитика',
     items: [
-      { href: '/analytics', label: 'Эффективность', icon: <I.Chart /> },
-      { href: '/sources', label: 'Источники', icon: <I.Source /> },
+      { href: '/analytics', label: 'Эффективность', icon: <I.Chart />, feature: 'analytics' },
+      { href: '/sources', label: 'Источники', icon: <I.Source />, feature: 'analytics' },
     ],
   },
   {
     key: 'sales',
     label: 'Продажи',
     items: [
-      { href: '/leads', label: 'Заявки', icon: <I.Leads />, badge: (c) => c.newLeads },
-      { href: '/payments', label: 'Платежи', icon: <I.Wallet /> },
-      { href: '/subscriptions', label: 'Подписки', icon: <I.Subs />, badge: (c) => c.expiringSubs },
+      { href: '/leads', label: 'Заявки', icon: <I.Leads />, feature: 'leads', badge: (c) => c.newLeads },
+      { href: '/payments', label: 'Платежи', icon: <I.Wallet />, feature: 'monetization' },
+      { href: '/subscriptions', label: 'Подписки', icon: <I.Subs />, feature: 'monetization', badge: (c) => c.expiringSubs },
     ],
   },
   {
     key: 'funnels',
     label: 'Воронки',
     items: [
-      { href: '/funnels', label: 'Воронки', icon: <I.Funnel />, badge: (c) => c.funnelsTodo },
-      { href: '/lead-magnets', label: 'Лидмагниты', icon: <I.Magnet /> },
-      { href: '/funnel-triggers', label: 'Кодовые слова', icon: <I.Trigger /> },
-      { href: '/quizzes', label: 'Квизы', icon: <I.Quiz /> },
-      { href: '/forms', label: 'Формы', icon: <I.Form /> },
+      { href: '/funnels', label: 'Воронки', icon: <I.Funnel />, feature: 'funnels', badge: (c) => c.funnelsTodo },
+      { href: '/lead-magnets', label: 'Лидмагниты', icon: <I.Magnet />, feature: 'lead_magnets' },
+      { href: '/funnel-triggers', label: 'Кодовые слова', icon: <I.Trigger />, feature: 'funnel_triggers' },
+      { href: '/quizzes', label: 'Квизы', icon: <I.Quiz />, feature: 'quizzes' },
+      { href: '/forms', label: 'Формы', icon: <I.Form />, feature: 'forms' },
     ],
   },
   {
@@ -231,12 +233,16 @@ export default function DashLayout({ children }: { children: ReactNode }) {
     return new Set(NAV_GROUPS.filter((g) => g.defaultCollapsed).map((g) => g.key));
   });
 
-  // Бейджи — лёгкий polling overview + funnels раз в минуту
+  const { isOn, isOff } = useFeatures();
+
+  // Бейджи — лёгкий polling overview + funnels раз в минуту.
+  // /stats/overview — ядровый (всегда). /funnels дёргаем только если фича
+  // включена, иначе словим 404 каждые 2 минуты.
   const { data: overview } = useSWR<Overview>('/stats/overview', fetcher, {
     refreshInterval: 60_000,
     revalidateOnFocus: false,
   });
-  const { data: funnels } = useSWR<Funnel[]>('/funnels', fetcher, {
+  const { data: funnels } = useSWR<Funnel[]>(isOn('funnels') ? '/funnels' : null, fetcher, {
     refreshInterval: 120_000,
     revalidateOnFocus: false,
   });
@@ -269,6 +275,13 @@ export default function DashLayout({ children }: { children: ReactNode }) {
 
   useEffect(() => { setNavOpen(false); }, [pathname]);
 
+  // Защита от прямого перехода по URL на страницу выключенной фичи.
+  // Редиректим только когда ТОЧНО знаем, что фича выключена (конфиг загружен).
+  useEffect(() => {
+    const feature = featureForPath(pathname);
+    if (feature && isOff(feature)) router.replace('/');
+  }, [pathname, isOff, router]);
+
   function toggleGroup(key: string) {
     setCollapsedGroups((prev) => {
       const next = new Set(prev);
@@ -297,7 +310,12 @@ export default function DashLayout({ children }: { children: ReactNode }) {
   }
 
   const isAdmin = !me?.role || me.role === 'admin';
-  const visibleGroups = NAV_GROUPS.filter((g) => !g.adminOnly || isAdmin);
+  // Фильтр меню: по роли (adminOnly) + по фичам (на уровне пунктов).
+  // Группа без видимых пунктов скрывается целиком (напр. «Воронки» при funnels=off).
+  const visibleGroups = NAV_GROUPS
+    .filter((g) => !g.adminOnly || isAdmin)
+    .map((g) => ({ ...g, items: g.items.filter((i) => !i.feature || isOn(i.feature)) }))
+    .filter((g) => g.items.length > 0);
 
   const sidebar = (
     <aside

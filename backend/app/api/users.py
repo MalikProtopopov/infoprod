@@ -7,11 +7,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import current_admin, get_session, require_role
 from app.models.admin import Admin
 from app.models.channel import Channel
+from app.models.form import Form
+from app.models.funnel import Funnel
+from app.models.funnel_entry import FunnelEntry
+from app.models.funnel_step import FunnelStep
 from app.models.lead import Lead
 from app.models.payment import Payment
 from app.models.product import Product
+from app.models.quiz import Quiz
 from app.models.subscription import Subscription
 from app.models.user import User
+from app.models.user_step_state import UserStepState
 from app.schemas.user import UserOut, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -172,14 +178,7 @@ async def user_submissions(
     (даже если квиз/форма потом отредактировали), название
     квиза/формы из текущей версии, и контекст воронки.
     """
-    from sqlalchemy import select, and_
-    from app.models.user_step_state import UserStepState
-    from app.models.funnel_step import FunnelStep
-    from app.models.funnel import Funnel
-    from app.models.funnel_entry import FunnelEntry
-    from app.models.quiz import Quiz
-    from app.models.form import Form
-    from app.models.lead import Lead
+    from sqlalchemy import and_, select
 
     user = await session.get(User, user_id)
     if user is None:

@@ -14,6 +14,10 @@ import { FunnelProgress, type ProgressStep } from '@/components/FunnelProgress';
 import { TelegramPreview } from '@/components/TelegramPreview';
 import { RichTextEditor } from '@/components/RichTextEditor';
 import { QuickLeadMagnetUpload } from '@/components/QuickLeadMagnetUpload';
+import { useFeatures } from '@/lib/features';
+import { QuizFormPicker } from '@/components/funnel-studio/QuizFormPicker';
+import { SectionHeader } from '@/components/funnel-studio/SectionHeader';
+import { StepKindSelector } from '@/components/funnel-studio/StepKindSelector';
 import { StepMediaPanel } from '@/components/StepMediaPanel';
 import { EntryPointsSection } from '@/components/EntryPointsSection';
 import { ObservableTestPanel } from '@/components/ObservableTestPanel';
@@ -125,7 +129,7 @@ function getStepMediaInfo(
       count: 0,
     };
   }
-  const lm = magnets.find((m) => m.id === step.lead_magnet_id);
+  const lm = (magnets || []).find((m) => m.id === step.lead_magnet_id);
   if (!lm) {
     return { icon: '?', color: 'bg-zinc-100 text-zinc-500', dot: 'bg-zinc-300', title: 'Медиа удалено', count: 0 };
   }
@@ -146,9 +150,13 @@ export default function FunnelStudioPage({ params }: { params: Promise<{ id: str
   const search = useSearchParams();
   const welcomeMode = search?.get('welcome') === '1';
 
+  const { isOn: pageIsOn } = useFeatures();
   const { data, mutate } = useSWR<FunnelDetail>(`/funnels/${id}`, fetcher);
   const { data: products } = useSWR<Product[]>('/products', fetcher);
-  const { data: magnets, mutate: mutateMagnets } = useSWR<LeadMagnet[]>('/lead-magnets', fetcher);
+  const { data: magnets, mutate: mutateMagnets } = useSWR<LeadMagnet[]>(
+    pageIsOn('lead_magnets') ? '/lead-magnets' : null,
+    fetcher,
+  );
   const { data: bots } = useSWR<Bot[]>('/bots', fetcher);
   const { data: entryPoints } = useSWR<EntryPoints>(`/funnels/${id}/entry-points`, fetcher);
 
@@ -466,7 +474,7 @@ function Section2Steps({
                   {funnel.steps.map((s) => {
                     const h = delayToHuman(s.delay_minutes);
                     const unitLabel = DELAY_UNITS.find((u) => u.mult === h.unit)?.label || 'мин';
-                    const lm = magnets.find((m) => m.id === s.lead_magnet_id);
+                    const lm = (magnets || []).find((m) => m.id === s.lead_magnet_id);
                     const media = getStepMediaInfo(s, magnets);
                     const isDropTarget = dropTargetId === s.id && dragId !== s.id;
                     return (
@@ -597,7 +605,7 @@ function Section2Steps({
               {editingStep ? (
                 <TelegramPreview
                   text={editingStep.message_text}
-                  leadMagnet={editingStep.lead_magnet_id ? magnets.find((m) => m.id === editingStep.lead_magnet_id) || null : null}
+                  leadMagnet={editingStep.lead_magnet_id ? (magnets || []).find((m) => m.id === editingStep.lead_magnet_id) || null : null}
                   buttons={editingStep.buttons}
                   botUsername={bot?.username}
                   stepMedia={editingStep.media || []}
@@ -661,6 +669,7 @@ function StepEditor({
     } finally { setSaving(false); }
   }
 
+  const { isOn } = useFeatures();
   const isQuiz = local.kind === 'quiz';
   const isForm = local.kind === 'form';
   const isMessage = !isQuiz && !isForm;
@@ -691,6 +700,8 @@ function StepEditor({
       >
         <StepKindSelector
           kind={local.kind}
+          allowQuiz={isOn('quizzes')}
+          allowForm={isOn('forms')}
           onChange={(nextKind) => {
             if (nextKind === local.kind) return;
             // При смене типа: квиз/форма — контейнеры (is_active=false, delay_minutes=0),
@@ -778,6 +789,7 @@ function StepEditor({
             <StepMediaPanel stepId={local.id} />
           </Field>
 
+          {isOn('lead_magnets') && (
           <Field
             label="Готовый лидмагнит (старый формат)"
             hint="Опционально, если хотите выбрать ранее загруженный лидмагнит из библиотеки. Отправится после текста, если на шаге нет своих медиа выше."
@@ -789,13 +801,14 @@ function StepEditor({
                 onChange={(e) => setLocal({ ...local, lead_magnet_id: e.target.value ? Number(e.target.value) : null })}
               >
                 <option value="">— без лидмагнита —</option>
-                {magnets.map((m) => (
+                {(magnets || []).map((m) => (
                   <option key={m.id} value={m.id}>{m.name} ({m.file_type})</option>
                 ))}
               </Select>
               <Button variant="ghost" size="md" onClick={() => setMagnetUploadOpen(true)}>+ Загрузить</Button>
             </div>
           </Field>
+          )}
 
           <Field label="Inline-кнопки" hint="Опционально. Системная «🔕 Не присылать» добавляется автоматически.">
             <ButtonsEditor
@@ -945,118 +958,3 @@ function Section4Launch({
   );
 }
 
-
-function SectionHeader({
-  n, title, subtitle, status, onCollapse, collapsed,
-}: {
-  n: number;
-  title: string;
-  subtitle?: string;
-  status: 'ok' | 'warn' | 'todo' | 'off';
-  onCollapse?: () => void;
-  collapsed?: boolean;
-}) {
-  const icon = { ok: '✅', warn: '❗', todo: '⚪', off: '🔘' }[status];
-  return (
-    <div className="flex items-start justify-between gap-3 mb-3">
-      <div className="flex items-center gap-2 min-w-0">
-        <span className="size-7 rounded-lg gradient-primary text-white text-xs font-bold flex items-center justify-center shrink-0">
-          §{n}
-        </span>
-        <div>
-          <h3 className="font-semibold text-base flex items-center gap-2">
-            <span>{title}</span>
-            <span className="text-sm">{icon}</span>
-          </h3>
-          {subtitle && <div className="text-xs text-zinc-500 mt-0.5">{subtitle}</div>}
-        </div>
-      </div>
-      {onCollapse && (
-        <button type="button" onClick={onCollapse} className="text-xs text-zinc-500 hover:text-ink">
-          {collapsed ? '⌄ Раскрыть' : '⌃ Свернуть'}
-        </button>
-      )}
-    </div>
-  );
-}
-
-
-/** Сегмент-переключатель типа шага. */
-function StepKindSelector({
-  kind, onChange,
-}: {
-  kind: 'message' | 'quiz' | 'form';
-  onChange: (next: 'message' | 'quiz' | 'form') => void;
-}) {
-  const items: { value: 'message' | 'quiz' | 'form'; label: string; emoji: string }[] = [
-    { value: 'message', label: 'Сообщение', emoji: '💬' },
-    { value: 'quiz',    label: 'Квиз',      emoji: '🧠' },
-    { value: 'form',    label: 'Форма',     emoji: '📋' },
-  ];
-  return (
-    <div className="inline-flex rounded-xl bg-zinc-100/80 p-1 text-sm">
-      {items.map((it) => {
-        const active = it.value === kind;
-        return (
-          <button
-            key={it.value}
-            type="button"
-            onClick={() => onChange(it.value)}
-            className={
-              'px-3 h-8 rounded-lg transition flex items-center gap-1.5 ' +
-              (active
-                ? 'bg-white shadow-soft text-ink font-medium'
-                : 'text-zinc-500 hover:text-ink')
-            }
-          >
-            <span>{it.emoji}</span>
-            <span>{it.label}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-
-/** Селектор существующего квиза/формы + кнопка «создать новый». */
-function QuizFormPicker({
-  kind, value, onChange,
-}: {
-  kind: 'quiz' | 'form';
-  value: number | null;
-  onChange: (id: number | null) => void;
-}) {
-  const endpoint = kind === 'quiz' ? '/quizzes' : '/forms';
-  const detailHref = kind === 'quiz' ? '/quizzes/' : '/forms/';
-  const { data } = useSWR<{ id: number; name: string }[]>(endpoint, fetcher);
-  return (
-    <div className="flex gap-2 items-center">
-      <Select
-        className="flex-1"
-        value={value == null ? '' : String(value)}
-        onChange={(e) => onChange(e.target.value === '' ? null : Number(e.target.value))}
-      >
-        <option value="">— не привязан —</option>
-        {(data || []).map((q) => (
-          <option key={q.id} value={q.id}>{q.name}</option>
-        ))}
-      </Select>
-      {value != null && (
-        <Link
-          href={`${detailHref}${value}`}
-          className="text-sm text-indigo-600 hover:underline shrink-0"
-        >
-          Открыть →
-        </Link>
-      )}
-      <Link
-        href={endpoint}
-        className="text-sm text-zinc-500 hover:text-ink shrink-0"
-        title={kind === 'quiz' ? 'Список квизов' : 'Список форм'}
-      >
-        + Создать
-      </Link>
-    </div>
-  );
-}

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import useSWR from 'swr';
 
 import { fetcher } from '@/lib/api';
+import { useFeatures } from '@/lib/features';
 import { Card, Empty, PageHeader, Pill, Stat } from '@/components/ui';
 
 type Overview = {
@@ -34,6 +35,7 @@ type Overview = {
 };
 
 export default function DashboardPage() {
+  const { isOn } = useFeatures();
   const { data, isLoading } = useSWR<Overview>('/stats/overview', fetcher, { refreshInterval: 30000 });
 
   return (
@@ -52,6 +54,7 @@ export default function DashboardPage() {
       ) : (
         <>
           <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
+            {isOn('monetization') && (
             <Stat
               label="Активные подписки"
               value={data.subscriptions.active}
@@ -65,6 +68,8 @@ export default function DashboardPage() {
                 </svg>
               }
             />
+            )}
+            {isOn('leads') && (
             <Stat
               label="Новые заявки"
               value={data.leads.new}
@@ -76,6 +81,7 @@ export default function DashboardPage() {
                 </svg>
               }
             />
+            )}
             <Stat
               label="Пользователи бота"
               value={data.users.total}
@@ -87,6 +93,7 @@ export default function DashboardPage() {
                 </svg>
               }
             />
+            {isOn('monetization') && (
             <Stat
               label="Оборот за 30 дней"
               value={fmtMoney(data.revenue.last_30d)}
@@ -103,10 +110,12 @@ export default function DashboardPage() {
                 </svg>
               }
             />
+            )}
           </section>
 
           <section className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-5">
             {/* Последние заявки */}
+            {isOn('leads') && (
             <Card padded className="anim-rise">
               <div className="flex items-center justify-between mb-4">
                 <div>
@@ -143,8 +152,10 @@ export default function DashboardPage() {
                 </ul>
               )}
             </Card>
+            )}
 
             {/* Последние платежи */}
+            {isOn('monetization') && (
             <Card padded className="anim-rise">
               <div className="flex items-center justify-between mb-4">
                 <div>
@@ -180,6 +191,7 @@ export default function DashboardPage() {
                 </ul>
               )}
             </Card>
+            )}
           </section>
 
           <section className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-5">

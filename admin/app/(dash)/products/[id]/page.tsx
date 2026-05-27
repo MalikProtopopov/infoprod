@@ -5,6 +5,7 @@ import { use, useEffect, useState } from 'react';
 import useSWR from 'swr';
 
 import { api, fetcher } from '@/lib/api';
+import { useFeatures } from '@/lib/features';
 import {
   Button, Card, Empty, Field, Input, PageHeader, Pill, Sheet,
   TableHead, TableWrap, Td, Textarea, Th, Tr, Select,
@@ -51,14 +52,15 @@ const MEDIUM_PRESETS = ['reels', 'post', 'story', 'story_ads', 'video', 'email',
 
 export default function ProductDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const { isOn } = useFeatures();
   const { data: product } = useSWR<Product>(`/products/${id}`, fetcher);
   const { data: links, mutate: mutateLinks } = useSWR<TrackingLink[]>(
-    `/tracking-links?product_id=${id}&limit=200`,
+    isOn('tracking_links') ? `/tracking-links?product_id=${id}&limit=200` : null,
     fetcher,
   );
   const { data: bots } = useSWR<Bot[]>('/bots', fetcher);
   const { data: productFunnels } = useSWR<{ id: number; name: string }[]>(
-    product ? `/funnels?product_id=${product.id}` : null,
+    product && isOn('funnels') ? `/funnels?product_id=${product.id}` : null,
     fetcher,
   );
 
@@ -164,6 +166,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
       </Card>
 
       {/* Трекинговые ссылки */}
+      {isOn('tracking_links') && (
       <Card padded className="anim-rise">
         <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
           <h3 className="font-semibold flex items-center gap-2">
@@ -227,8 +230,10 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
           </TableWrap>
         )}
       </Card>
+      )}
 
       {/* Воронки этого продукта */}
+      {isOn('funnels') && (
       <Card padded className="mt-5 anim-rise">
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-semibold flex items-center gap-2">
@@ -256,6 +261,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
           </ul>
         )}
       </Card>
+      )}
 
       {copyMsg && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 glass-strong rounded-xl px-4 py-2 text-sm anim-fade">
@@ -361,6 +367,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
               </Field>
             )}
 
+            {isOn('funnels') && (
             <Field label="Запустить воронку при переходе" hint="Каждый кликнувший по ссылке попадёт в эту воронку">
               <Select
                 value={form.funnel_id}
@@ -372,6 +379,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
                 ))}
               </Select>
             </Field>
+            )}
 
             <button
               type="button"

@@ -25,6 +25,8 @@ from app.core.metrics import PrometheusMetricsMiddleware, metrics_response  # no
 from app.api.payments import router as payments_router  # noqa: E402
 from app.api.products import router as products_router  # noqa: E402
 from app.api.stats import router as stats_router  # noqa: E402
+from app.api.stats import overview_router as stats_overview_router  # noqa: E402
+from app.api.config import router as config_router  # noqa: E402
 from app.api.subscriptions import router as subscriptions_router  # noqa: E402
 from app.api.tracking_links import router as tracking_links_router  # noqa: E402
 from app.api.users import router as users_router  # noqa: E402
@@ -40,6 +42,7 @@ from app.api.quizzes import router as quizzes_router  # noqa: E402
 from app.api.forms import router as forms_router  # noqa: E402
 from app.bot import manager as bot_manager  # noqa: E402
 from app.core.config import settings  # noqa: E402
+from app.core.features import current_features  # noqa: E402
 from app.workers import scheduler  # noqa: E402
 
 
@@ -89,34 +92,64 @@ if settings.cors_origins_list:
         allow_headers=["*"],
     )
 
-api = APIRouter(prefix="/api")
+# ───────── Ядро: подключается всегда ─────────
+CORE_ROUTERS = (
+    auth_router,
+    admin_router,
+    bots_router,
+    channels_router,
+    products_router,
+    users_router,
+    audit_router,
+    feature_requests_router,
+    config_router,
+    stats_overview_router,  # /stats/overview — нужен главной админки всегда
+)
+
+# ───────── Отключаемые фичи → их роутеры ─────────
+# Ключи соответствуют app.core.features.FEATURE_REGISTRY. Резолвер уже учёл
+# каскад зависимостей, поэтому здесь просто читаем эффективный набор.
+FEATURE_ROUTERS: dict[str, list] = {
+    "leads": [leads_router],
+    "monetization": [payments_router, subscriptions_router],
+    "tracking_links": [tracking_links_router],
+    "analytics": [stats_router],
+    "funnels": [
+        funnels_router,
+        funnel_entries_router,
+        funnel_steps_router,
+        funnel_step_media_router,
+    ],
+    "funnel_triggers": [funnel_triggers_router],
+    "quizzes": [quizzes_router],
+    "forms": [forms_router],
+    "lead_magnets": [lead_magnets_router],
+}
 
 
-@api.get("/healthz")
-async def healthz() -> dict:
-    return {"ok": True}
+def build_api_router(features: dict[str, bool]) -> APIRouter:
+    """Собирает /api-роутер: ядро всегда + фичевые роутеры по флагам.
+
+    Вынесено в функцию, чтобы было тестируемо без перезагрузки модуля.
+    """
+    api = APIRouter(prefix="/api")
+
+    @api.get("/healthz")
+    async def healthz() -> dict:  # noqa: WPS430 — локальный эндпойнт ок
+        return {"ok": True}
+
+    for core_router in CORE_ROUTERS:
+        api.include_router(core_router)
+
+    for key, routers in FEATURE_ROUTERS.items():
+        if features.get(key):
+            for r in routers:
+                api.include_router(r)
+            logger.info("feature.enabled", feature=key)
+        else:
+            logger.info("feature.disabled", feature=key)
+
+    return api
 
 
-api.include_router(auth_router)
-api.include_router(admin_router)
-api.include_router(bots_router)
-api.include_router(channels_router)
-api.include_router(products_router)
-api.include_router(users_router)
-api.include_router(leads_router)
-api.include_router(payments_router)
-api.include_router(subscriptions_router)
-api.include_router(tracking_links_router)
-api.include_router(stats_router)
-api.include_router(funnels_router)
-api.include_router(funnel_entries_router)
-api.include_router(funnel_steps_router)
-api.include_router(lead_magnets_router)
-api.include_router(funnel_step_media_router)
-api.include_router(funnel_triggers_router)
-api.include_router(audit_router)
-api.include_router(feature_requests_router)
-api.include_router(quizzes_router)
-api.include_router(forms_router)
-
-app.include_router(api)
+app.include_router(build_api_router(current_features()))

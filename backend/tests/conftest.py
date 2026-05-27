@@ -198,201 +198,88 @@ def factories(session: AsyncSession):
     return f
 
 
+# ---------- factory helper (общий для make / make_committed) ----------
+# name -> (атрибут фабрики в tests.factories, [(dep_kwarg, dep_method), ...])
+# Дефолтинг зависимостей (bot→channel→product и т.п.) описан здесь один раз,
+# вместо дублирования в _Make (flush) и _Committed (commit).
+_FACTORY_DEPS: dict[str, tuple[str, list[tuple[str, str]]]] = {
+    "admin": ("AdminFactory", []),
+    "bot": ("BotFactory", []),
+    "channel": ("ChannelFactory", [("bot", "bot")]),
+    "product": ("ProductFactory", [("channel", "channel")]),
+    "user": ("UserFactory", []),
+    "lead": ("LeadFactory", [("user", "user"), ("product", "product")]),
+    "payment": ("PaymentFactory", [("user", "user"), ("product", "product")]),
+    "subscription": ("SubscriptionFactory", [("user", "user"), ("channel", "channel")]),
+    "tracking_link": ("TrackingLinkFactory", [("product", "product")]),
+    "lead_magnet": ("LeadMagnetFactory", []),
+    "funnel": ("FunnelFactory", [("product", "product")]),
+    "funnel_step": ("FunnelStepFactory", [("funnel", "funnel")]),
+    "funnel_entry": ("FunnelEntryFactory", [("user", "user"), ("funnel", "funnel")]),
+    "funnel_trigger": ("FunnelTriggerFactory", [("funnel", "funnel")]),
+    "scheduled_message": ("ScheduledMessageFactory", [("user", "user")]),
+}
+
+
+class _FactoryHelper:
+    """Динамический фасад над factory-boy: дефолтит зависимости и сохраняет
+    через стратегию persist(factory_attr, **kw) -> obj (flush либо commit)."""
+
+    def __init__(self, persist):
+        self._persist = persist
+
+    def __getattr__(self, name: str):
+        if name not in _FACTORY_DEPS:
+            raise AttributeError(name)
+        factory_attr, deps = _FACTORY_DEPS[name]
+
+        async def _create(**kw):
+            for dep_kw, dep_method in deps:
+                if dep_kw not in kw and f"{dep_kw}_id" not in kw:
+                    kw[dep_kw] = await getattr(self, dep_method)()
+            return await self._persist(factory_attr, **kw)
+
+        return _create
+
+
 @pytest_asyncio.fixture
 async def make(session: AsyncSession, factories):
-    """Async-хелпер для создания моделей.
+    """Async-хелпер создания моделей на общей `session` с flush() (unit-тесты).
 
-    Для unit-тестов сервисов и хендлеров: использует общую `session` с flush().
-    Для API-тестов: см. `make_committed` — он коммитит данные сразу,
-    чтобы HTTP-эндпоинты их видели (иначе lock на одной транзакции).
-
-    Пример:
-        sub = await make.subscription(status="active")
+    Пример: sub = await make.subscription(status="active")
     """
-    class _Make:
-        async def admin(self, **kw):
-            obj = factories.Admin(**kw); session.add(obj); await session.flush(); return obj
+    async def _persist(factory_attr: str, **kw):
+        obj = getattr(factories, factory_attr)(**kw)
+        session.add(obj)
+        await session.flush()
+        return obj
 
-        async def bot(self, **kw):
-            obj = factories.Bot(**kw); session.add(obj); await session.flush(); return obj
-
-        async def channel(self, **kw):
-            if "bot" not in kw and "bot_id" not in kw:
-                kw["bot"] = await self.bot()
-            obj = factories.Channel(**kw); session.add(obj); await session.flush(); return obj
-
-        async def product(self, **kw):
-            if "channel" not in kw and "channel_id" not in kw:
-                kw["channel"] = await self.channel()
-            obj = factories.Product(**kw); session.add(obj); await session.flush(); return obj
-
-        async def user(self, **kw):
-            obj = factories.User(**kw); session.add(obj); await session.flush(); return obj
-
-        async def lead(self, **kw):
-            if "user" not in kw and "user_id" not in kw:
-                kw["user"] = await self.user()
-            if "product" not in kw and "product_id" not in kw:
-                kw["product"] = await self.product()
-            obj = factories.Lead(**kw); session.add(obj); await session.flush(); return obj
-
-        async def payment(self, **kw):
-            if "user" not in kw and "user_id" not in kw:
-                kw["user"] = await self.user()
-            if "product" not in kw and "product_id" not in kw:
-                kw["product"] = await self.product()
-            obj = factories.Payment(**kw); session.add(obj); await session.flush(); return obj
-
-        async def subscription(self, **kw):
-            if "user" not in kw and "user_id" not in kw:
-                kw["user"] = await self.user()
-            if "channel" not in kw and "channel_id" not in kw:
-                kw["channel"] = await self.channel()
-            obj = factories.Subscription(**kw); session.add(obj); await session.flush(); return obj
-
-        async def tracking_link(self, **kw):
-            if "product" not in kw and "product_id" not in kw:
-                kw["product"] = await self.product()
-            obj = factories.TrackingLink(**kw); session.add(obj); await session.flush(); return obj
-
-        async def lead_magnet(self, **kw):
-            obj = factories.LeadMagnet(**kw); session.add(obj); await session.flush(); return obj
-
-        async def funnel(self, **kw):
-            if "product" not in kw and "product_id" not in kw:
-                kw["product"] = await self.product()
-            obj = factories.Funnel(**kw); session.add(obj); await session.flush(); return obj
-
-        async def funnel_step(self, **kw):
-            if "funnel" not in kw and "funnel_id" not in kw:
-                kw["funnel"] = await self.funnel()
-            obj = factories.FunnelStep(**kw); session.add(obj); await session.flush(); return obj
-
-        async def funnel_entry(self, **kw):
-            if "user" not in kw and "user_id" not in kw:
-                kw["user"] = await self.user()
-            if "funnel" not in kw and "funnel_id" not in kw:
-                kw["funnel"] = await self.funnel()
-            obj = factories.FunnelEntry(**kw); session.add(obj); await session.flush(); return obj
-
-        async def funnel_trigger(self, **kw):
-            if "funnel" not in kw and "funnel_id" not in kw:
-                kw["funnel"] = await self.funnel()
-            obj = factories.FunnelTrigger(**kw); session.add(obj); await session.flush(); return obj
-
-        async def scheduled_message(self, **kw):
-            if "user" not in kw and "user_id" not in kw:
-                kw["user"] = await self.user()
-            obj = factories.ScheduledMessage(**kw); session.add(obj); await session.flush(); return obj
-
-    return _Make()
+    return _FactoryHelper(_persist)
 
 
 @pytest_asyncio.fixture
 async def make_committed(engine: AsyncEngine):
     """Создаёт модели через отдельный коммит — данные видны API-эндпоинтам.
 
-    Использовать в API-тестах:
-        product = await make_committed.product()
-        # тут уже product.id есть и виден через admin_client
+    Пример: product = await make_committed.product()
     """
     from tests import factories as f
 
     SetupSession = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    _all_factory_attrs = [attr for attr, _ in _FACTORY_DEPS.values()]
 
-    async def _save(factory_cls, **kw):
+    async def _persist(factory_attr: str, **kw):
         async with SetupSession() as s:
-            # Привязываем фабрики к этой сессии
-            for fc in (f.AdminFactory, f.BotFactory, f.ChannelFactory, f.ProductFactory,
-                       f.UserFactory, f.LeadFactory, f.PaymentFactory,
-                       f.SubscriptionFactory, f.TrackingLinkFactory,
-                       f.FunnelFactory, f.FunnelStepFactory, f.FunnelEntryFactory,
-                       f.FunnelTriggerFactory, f.LeadMagnetFactory,
-                       f.ScheduledMessageFactory):
-                fc._meta.sqlalchemy_session = s
-            obj = factory_cls(**kw)
+            # Привязываем все фабрики к этой сессии перед созданием.
+            for attr in _all_factory_attrs:
+                getattr(f, attr)._meta.sqlalchemy_session = s
+            obj = getattr(f, factory_attr)(**kw)
             s.add(obj)
             await s.commit()
             await s.refresh(obj)
             return obj
 
-    class _Committed:
-        async def admin(self, **kw):
-            return await _save(f.AdminFactory, **kw)
-
-        async def bot(self, **kw):
-            return await _save(f.BotFactory, **kw)
-
-        async def channel(self, **kw):
-            if "bot" not in kw and "bot_id" not in kw:
-                kw["bot"] = await self.bot()
-            return await _save(f.ChannelFactory, **kw)
-
-        async def product(self, **kw):
-            if "channel" not in kw and "channel_id" not in kw:
-                kw["channel"] = await self.channel()
-            return await _save(f.ProductFactory, **kw)
-
-        async def user(self, **kw):
-            return await _save(f.UserFactory, **kw)
-
-        async def lead(self, **kw):
-            if "user" not in kw and "user_id" not in kw:
-                kw["user"] = await self.user()
-            if "product" not in kw and "product_id" not in kw:
-                kw["product"] = await self.product()
-            return await _save(f.LeadFactory, **kw)
-
-        async def payment(self, **kw):
-            if "user" not in kw and "user_id" not in kw:
-                kw["user"] = await self.user()
-            if "product" not in kw and "product_id" not in kw:
-                kw["product"] = await self.product()
-            return await _save(f.PaymentFactory, **kw)
-
-        async def subscription(self, **kw):
-            if "user" not in kw and "user_id" not in kw:
-                kw["user"] = await self.user()
-            if "channel" not in kw and "channel_id" not in kw:
-                kw["channel"] = await self.channel()
-            return await _save(f.SubscriptionFactory, **kw)
-
-        async def tracking_link(self, **kw):
-            if "product" not in kw and "product_id" not in kw:
-                kw["product"] = await self.product()
-            return await _save(f.TrackingLinkFactory, **kw)
-
-        async def lead_magnet(self, **kw):
-            return await _save(f.LeadMagnetFactory, **kw)
-
-        async def funnel(self, **kw):
-            if "product" not in kw and "product_id" not in kw:
-                kw["product"] = await self.product()
-            return await _save(f.FunnelFactory, **kw)
-
-        async def funnel_step(self, **kw):
-            if "funnel" not in kw and "funnel_id" not in kw:
-                kw["funnel"] = await self.funnel()
-            return await _save(f.FunnelStepFactory, **kw)
-
-        async def funnel_entry(self, **kw):
-            if "user" not in kw and "user_id" not in kw:
-                kw["user"] = await self.user()
-            if "funnel" not in kw and "funnel_id" not in kw:
-                kw["funnel"] = await self.funnel()
-            return await _save(f.FunnelEntryFactory, **kw)
-
-        async def funnel_trigger(self, **kw):
-            if "funnel" not in kw and "funnel_id" not in kw:
-                kw["funnel"] = await self.funnel()
-            return await _save(f.FunnelTriggerFactory, **kw)
-
-        async def scheduled_message(self, **kw):
-            if "user" not in kw and "user_id" not in kw:
-                kw["user"] = await self.user()
-            return await _save(f.ScheduledMessageFactory, **kw)
-
-    return _Committed()
+    return _FactoryHelper(_persist)
 
 
 # ---------- Telegram-моки ----------

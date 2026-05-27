@@ -6,6 +6,7 @@ from fastapi import Cookie, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.features import is_enabled
 from app.core.security import decode_token
 from app.db.session import SessionLocal
 from app.models.admin import Admin
@@ -73,5 +74,21 @@ def require_perm(perm: str):
                 detail=f"Роль {admin.role!r} не имеет права {perm!r}",
             )
         return admin
+
+    return _check
+
+
+# ───────── Feature flags ─────────
+
+def require_feature(key: str):
+    """Dependency-гард на уровне эндпойнта: 404, если фича выключена.
+
+    Нужен там, где роутер нельзя выключить целиком (часть эндпойнтов — ядро),
+    например `/stats/*` кроме `/overview`. Применение:
+        @router.get(..., dependencies=[Depends(require_feature("analytics"))])
+    """
+    async def _check() -> None:
+        if not is_enabled(key):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feature disabled")
 
     return _check

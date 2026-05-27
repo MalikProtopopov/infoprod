@@ -177,7 +177,9 @@ async def test_funnel_detail_includes_media(
     """GET /api/funnels/{id} возвращает шаги с массивом media[]."""
     monkeypatch.setattr("app.services.step_media.STORAGE_DIR", tmp_path)
     funnel = await make_committed.funnel()
-    step = await make_committed.funnel_step(funnel_id=funnel.id)
+    # Передаём объект funnel (не funnel_id): иначе SubFactory FunnelStepFactory.funnel
+    # создаёт лишнюю вложенную воронку с непрофлашенным product_id → NOT NULL violation.
+    step = await make_committed.funnel_step(funnel=funnel)
     files = {"file": ("f.png", io.BytesIO(b"\x89PNG\r\n\x1a\n" + b"x" * 10), "image/png")}
     await admin_client.post(f"/api/funnel-steps/{step.id}/media", files=files)
 

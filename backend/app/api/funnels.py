@@ -9,8 +9,10 @@ from app.models.admin import Admin
 from app.models.funnel import Funnel
 from app.models.funnel_entry import FunnelEntry
 from app.models.funnel_step import FunnelStep
+from app.models.funnel_step_media import FunnelStepMedia
 from app.models.funnel_trigger import FunnelTrigger
 from app.models.product import Product
+from app.models.scheduled_message import ScheduledMessage
 from app.models.tracking_link import TrackingLink
 from app.models.user import User
 from app.schemas.funnel import (
@@ -67,7 +69,6 @@ def _step_to_out(s: FunnelStep, media: list | None = None) -> FunnelStepOut:
 
 async def _load_media_by_step(session, step_ids: list[int]) -> dict[int, list]:
     """Batch-загрузка media для нескольких шагов. Возвращает dict step_id -> [media]."""
-    from app.models.funnel_step_media import FunnelStepMedia
     from sqlalchemy import select
 
     if not step_ids:
@@ -410,9 +411,6 @@ async def test_run(
     """
     from datetime import datetime, timedelta, timezone
 
-    from app.models.scheduled_message import ScheduledMessage
-    from app.models.user import User
-
     f = await session.get(Funnel, funnel_id)
     if f is None:
         raise HTTPException(status_code=404, detail="Funnel not found")
@@ -506,8 +504,6 @@ async def test_run_status(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Прогресс тестового прогона: какой шаг отправлен, какой ожидает."""
-    from app.models.scheduled_message import ScheduledMessage
-
     entry = await session.get(FunnelEntry, test_entry_id)
     if entry is None or entry.funnel_id != funnel_id:
         raise HTTPException(status_code=404, detail="Test entry not found")
