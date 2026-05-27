@@ -162,3 +162,21 @@ async def test_delete_product(admin_client, make_committed, clean_db):
 async def test_delete_unknown_product_404(admin_client, clean_db):
     r = await admin_client.delete("/api/products/99999")
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_delete_product_with_payments_returns_409(admin_client, make_committed, clean_db):
+    """Удаление продукта с платежами → 409 (а не 500). Платежи RESTRICT."""
+    product = await make_committed.product()
+    await make_committed.payment(product_id=product.id)
+    r = await admin_client.delete(f"/api/products/{product.id}")
+    assert r.status_code == 409
+    assert "платеж" in r.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+async def test_delete_product_without_payments_ok(admin_client, make_committed, clean_db):
+    """Без платежей продукт удаляется штатно (204)."""
+    product = await make_committed.product()
+    r = await admin_client.delete(f"/api/products/{product.id}")
+    assert r.status_code == 204

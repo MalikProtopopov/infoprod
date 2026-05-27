@@ -17,6 +17,14 @@ logger = structlog.get_logger("bot_sender")
 
 OnFileId = Optional[Callable[[int, str], Awaitable[None]]]
 
+# Telegram-лимит подписи к медиа — 1024 символа (для текста сообщения — 4096).
+# Длиннее — подпись не помещается, шлём медиа без неё, текст отдельным сообщением.
+MEDIA_CAPTION_LIMIT = 1024
+
+
+def caption_too_long(text: str | None) -> bool:
+    return bool(text) and len(text) > MEDIA_CAPTION_LIMIT
+
 
 def _src(media, *, force_disk: bool = False):
     from aiogram.types import FSInputFile

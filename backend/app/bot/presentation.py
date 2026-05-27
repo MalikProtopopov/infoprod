@@ -62,26 +62,36 @@ async def send_presentation(bot, chat_id: int, product) -> int:
         # 2) задержка (имитация набора), безопасно ограничена
         await asyncio.sleep(min(max((b.delay_ms or 0) / 1000.0, 0.0), _MAX_DELAY_S))
 
-        # 3) сам блок
+        # 3) сам блок. Длинная подпись (>1024) не помещается в caption медиа —
+        # шлём медиа без неё, а текст отдельным сообщением (иначе Telegram 400 и
+        # блок терялся бы целиком).
+        async def _send_text():
+            if b.text:
+                await bot.send_message(chat_id, b.text, parse_mode="HTML", disable_web_page_preview=True)
+
         try:
+            long_caption = sender.caption_too_long(b.text)
             if b.kind == "text":
-                if b.text:
-                    await bot.send_message(chat_id, b.text, parse_mode="HTML", disable_web_page_preview=True)
+                await _send_text()
             elif b.kind == "voice":
                 if b.media:
-                    await sender.send_media_item(bot, chat_id, b.media[0], caption=b.text, on_file_id=_persist_file_id)
+                    cap = None if long_caption else b.text
+                    await sender.send_media_item(bot, chat_id, b.media[0], caption=cap, on_file_id=_persist_file_id)
+                    if long_caption:
+                        await _send_text()
             elif b.kind == "video_note":
                 if b.media:
                     await sender.send_media_item(bot, chat_id, b.media[0], on_file_id=_persist_file_id)
-                    if b.text:
-                        await bot.send_message(chat_id, b.text, parse_mode="HTML", disable_web_page_preview=True)
+                    await _send_text()  # у кружка подписи нет — текст всегда отдельно
             elif b.kind == "media":
                 if len(b.media) == 1:
-                    await sender.send_media_item(bot, chat_id, b.media[0], caption=b.text, on_file_id=_persist_file_id)
+                    cap = None if long_caption else b.text
+                    await sender.send_media_item(bot, chat_id, b.media[0], caption=cap, on_file_id=_persist_file_id)
+                    if long_caption:
+                        await _send_text()
                 elif len(b.media) >= 2:
                     await sender.send_media_group(bot, chat_id, b.media, on_file_id=_persist_file_id)
-                    if b.text:
-                        await bot.send_message(chat_id, b.text, parse_mode="HTML", disable_web_page_preview=True)
+                    await _send_text()  # альбом без подписи — текст отдельным сообщением
             sent += 1
         except Exception:  # noqa: BLE001
             logger.warning("presentation.block_failed", block_id=b.id, kind=b.kind)

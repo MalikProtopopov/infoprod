@@ -108,6 +108,19 @@ async def test_patch_lead_cancelled_requires_reason(admin_client, make_committed
 
 
 @pytest.mark.asyncio
+async def test_cancel_reason_cleared_when_leaving_cancelled(admin_client, make_committed, clean_db):
+    """Выход из 'cancelled' зануляет cancel_reason/cancelled_at (F2)."""
+    lead = await make_committed.lead(status="new")
+    await admin_client.patch(f"/api/leads/{lead.id}", json={"status": "cancelled", "cancel_reason": "Дорого"})
+    # вернули в 'new' — причина должна очиститься
+    r = await admin_client.patch(f"/api/leads/{lead.id}", json={"status": "new"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["cancel_reason"] is None
+    assert body["cancelled_at"] is None
+
+
+@pytest.mark.asyncio
 async def test_cancel_reasons_summary(admin_client, make_committed, clean_db):
     for reason in ["Дорого", "Дорого", "Нет денег сейчас"]:
         lead = await make_committed.lead(status="new")

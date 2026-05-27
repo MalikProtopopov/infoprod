@@ -175,6 +175,10 @@ async def update_lead(
         if not reason:
             raise HTTPException(status_code=422, detail="Укажите причину отмены")
         lead.cancel_reason = reason
+    else:
+        # Выходим из «отменена» → старая причина больше не актуальна.
+        lead.cancel_reason = None
+        lead.cancelled_at = None
 
     # Таймстампы смены статуса — только при первом переходе.
     field_map = {

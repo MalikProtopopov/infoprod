@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import current_admin, get_session
@@ -150,6 +151,34 @@ async def delete_product(
     p = (await session.execute(select(Product).where(Product.id == product_id))).scalar_one_or_none()
     if not p:
         raise HTTPException(status_code=404, detail="Product not found")
+
+    # Платежи на продукт хранятся с ondelete=RESTRICT (финансовые записи нельзя
+    # терять). Если они есть — удаление невозможно: возвращаем понятный 409
+    # вместо сырого 500/IntegrityError. Продукт следует деактивировать.
+    from app.models.payment import Payment
+
+    payments_count = (
+        await session.execute(
+            select(func.count()).select_from(Payment).where(Payment.product_id == product_id)
+        )
+    ).scalar_one()
+    if payments_count:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Нельзя удалить продукт: по нему есть платежи ({payments_count}). "
+                "Снимите галочку «Активен», чтобы скрыть его, вместо удаления."
+            ),
+        )
+
     await session.delete(p)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError:
+        # Подстраховка на любой другой RESTRICT/ограничение целостности.
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Нельзя удалить продукт: на него есть связанные записи. Деактивируйте его.",
+        )
     return Response(status_code=204)

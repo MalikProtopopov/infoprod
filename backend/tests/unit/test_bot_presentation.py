@@ -37,6 +37,34 @@ async def test_send_presentation_sends_text_and_video_note(make_committed, clean
 
 
 @pytest.mark.asyncio
+async def test_long_caption_media_falls_back_to_separate_text(make_committed, clean_db):
+    """F1: подпись >1024 → медиа без caption + текст отдельным сообщением (не теряется)."""
+    product = await make_committed.product()
+    long_text = "x" * 1500
+    async with dbs.SessionLocal() as s:
+        b = ProductContentBlock(product_id=product.id, order_idx=0, kind="media",
+                                text=long_text, delay_ms=0)
+        s.add(b)
+        await s.flush()
+        s.add(ProductMedia(block_id=b.id, media_type="photo", storage_path="/tmp/none",
+                           mime_type="image/png", file_size=10, telegram_file_id="fid", order_idx=0))
+        await s.commit()
+
+    bot = MagicMock()
+    bot.send_chat_action = AsyncMock()
+    bot.send_photo = AsyncMock(return_value=MagicMock(photo=None))
+    bot.send_message = AsyncMock(return_value=MagicMock())
+
+    n = await send_presentation(bot, 1, product)
+    assert n == 1
+    # фото отправлено БЕЗ подписи
+    _, kwargs = bot.send_photo.call_args
+    assert kwargs.get("caption") is None
+    # длинный текст ушёл отдельным сообщением
+    bot.send_message.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_presentation_disabled_sends_nothing(make_committed, clean_db):
     product = await make_committed.product(presentation_enabled=False)
     bot = MagicMock()
