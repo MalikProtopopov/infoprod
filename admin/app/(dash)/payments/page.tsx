@@ -10,6 +10,14 @@ import {
 } from '@/components/ui';
 import { UserPicker, type PickedUser } from '@/components/UserPicker';
 
+type Receipt = {
+  id: number;
+  mime_type: string;
+  is_image: boolean;
+  original_filename: string | null;
+  created_at: string;
+};
+
 type Payment = {
   id: number;
   user_id: number;
@@ -22,6 +30,7 @@ type Payment = {
   currency: string;
   comment: string | null;
   created_at: string;
+  receipts: Receipt[];
 };
 
 type Product = {
@@ -32,6 +41,11 @@ type Product = {
   price_12m: string;
   currency: string;
 };
+
+const receiptUrl = (paymentId: number, receiptId: number) =>
+  `/api/payments/${paymentId}/receipts/${receiptId}/file`;
+
+const MAX_RECEIPTS = 3;
 
 export default function PaymentsPage() {
   const { data, mutate, isLoading } = useSWR<Payment[]>('/payments', fetcher);
@@ -45,6 +59,7 @@ export default function PaymentsPage() {
   const [comment, setComment] = useState<string>('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [receiptsFor, setReceiptsFor] = useState<Payment | null>(null);
 
   const selectedProduct = useMemo(
     () => (products || []).find((p) => p.id === productId),
@@ -65,6 +80,12 @@ export default function PaymentsPage() {
     }
     setAmount(String(selectedProduct[priceField]));
   }, [selectedProduct, period]);
+
+  // держим открытую шторку чеков в синхроне со свежими данными
+  const liveReceiptsFor = useMemo(
+    () => (receiptsFor ? (data || []).find((p) => p.id === receiptsFor.id) ?? receiptsFor : null),
+    [receiptsFor, data],
+  );
 
   function openModal() {
     setPickedUser(null); setProductId(''); setPeriod(3);
@@ -105,13 +126,14 @@ export default function PaymentsPage() {
         {!isLoading && (!data || data.length === 0) && <Empty>Платежей пока нет</Empty>}
         {data && data.length > 0 && (
           <TableWrap>
-            <table className="w-full text-sm min-w-[860px]">
+            <table className="w-full text-sm min-w-[940px]">
               <TableHead>
                 <Th>Дата</Th>
                 <Th>Пользователь</Th>
                 <Th>Продукт</Th>
                 <Th>Период</Th>
                 <Th>Сумма</Th>
+                <Th>Чек</Th>
                 <Th>Комментарий</Th>
                 <Th className="text-right">Действия</Th>
               </TableHead>
@@ -129,6 +151,7 @@ export default function PaymentsPage() {
                       {Number(p.amount).toLocaleString('ru-RU')}
                       <span className="text-zinc-500 text-xs ml-1">{p.currency}</span>
                     </Td>
+                    <Td><ReceiptCell payment={p} onOpen={() => setReceiptsFor(p)} /></Td>
                     <Td className="text-xs text-zinc-500 max-w-[200px] truncate">{p.comment || '—'}</Td>
                     <Td className="text-right">
                       <Button size="sm" variant="danger" onClick={() => remove(p)}>Удалить</Button>
@@ -194,6 +217,241 @@ export default function PaymentsPage() {
           )}
         </div>
       </Sheet>
+
+      {liveReceiptsFor && (
+        <ReceiptsSheet
+          payment={liveReceiptsFor}
+          onClose={() => setReceiptsFor(null)}
+          onChanged={mutate}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ---------- Ячейка чеков в строке: мини-превью + счётчик ---------- */
+function ReceiptCell({ payment, onOpen }: { payment: Payment; onOpen: () => void }) {
+  const list = payment.receipts ?? [];
+  const images = list.filter((r) => r.is_image);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="inline-flex items-center gap-1.5 rounded-lg px-1.5 py-1 hover:bg-white/70 transition"
+      title="Чеки платежа"
+    >
+      {list.length === 0 ? (
+        <span className="text-xs text-indigo-600">+ чек</span>
+      ) : (
+        <>
+          {images.slice(0, 2).map((r) => (
+            <img
+              key={r.id}
+              src={receiptUrl(payment.id, r.id)}
+              alt="чек"
+              className="size-8 rounded-md object-cover border border-zinc-200"
+            />
+          ))}
+          <span className="inline-flex items-center justify-center min-w-[18px] h-5 px-1 rounded-full bg-zinc-100 text-[11px] font-medium">
+            {list.length}
+          </span>
+        </>
+      )}
+    </button>
+  );
+}
+
+/* ---------- Шторка: чеки платежа (загрузка + галерея) ---------- */
+function ReceiptsSheet({
+  payment, onClose, onChanged,
+}: {
+  payment: Payment;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const receipts = payment.receipts ?? [];
+  const images = receipts.filter((r) => r.is_image);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<number | null>(null);
+
+  async function upload(file: File) {
+    setBusy(true); setError(null);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      await api.postForm(`/payments/${payment.id}/receipts`, form);
+      onChanged();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <Sheet
+      open
+      onClose={onClose}
+      title={`Чеки платежа #${payment.id}`}
+      description="Чеки можно только загрузить (до 3). Редактирование и удаление не предусмотрены."
+      footer={<Button variant="ghost" onClick={onClose}>Закрыть</Button>}
+    >
+      <div className="space-y-4">
+        {receipts.length === 0 && <Empty>Чеков пока нет</Empty>}
+
+        {receipts.length > 0 && (
+          <div className="grid grid-cols-3 gap-3">
+            {receipts.map((r) => (
+              <ReceiptTile
+                key={r.id}
+                paymentId={payment.id}
+                receipt={r}
+                onOpen={() => {
+                  const idx = images.findIndex((im) => im.id === r.id);
+                  if (idx >= 0) setLightbox(idx);
+                }}
+              />
+            ))}
+          </div>
+        )}
+
+        {receipts.length < MAX_RECEIPTS && (
+          <div>
+            <label className="inline-flex items-center gap-2 cursor-pointer">
+              <span className="inline-flex items-center justify-center h-9 px-4 rounded-xl gradient-primary text-white text-sm font-medium shadow-soft">
+                {busy ? 'Загрузка…' : '+ Загрузить чек'}
+              </span>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+                className="hidden"
+                disabled={busy}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) upload(f);
+                  e.target.value = '';
+                }}
+              />
+            </label>
+            <p className="mt-1.5 text-xs text-zinc-500">
+              Изображение (jpg/png/webp/gif) или PDF, до 10 МБ. Осталось слотов: {MAX_RECEIPTS - receipts.length}.
+            </p>
+          </div>
+        )}
+
+        {error && (
+          <div className="text-sm text-rose-600 bg-rose-50/80 border border-rose-200/60 rounded-xl px-3 py-2">
+            {error}
+          </div>
+        )}
+      </div>
+
+      {lightbox !== null && images.length > 0 && (
+        <Lightbox
+          images={images.map((r) => receiptUrl(payment.id, r.id))}
+          index={lightbox}
+          onIndex={setLightbox}
+          onClose={() => setLightbox(null)}
+        />
+      )}
+    </Sheet>
+  );
+}
+
+/* ---------- Плитка чека: превью с hover-зумом / PDF-чип ---------- */
+function ReceiptTile({
+  paymentId, receipt, onOpen,
+}: {
+  paymentId: number;
+  receipt: Receipt;
+  onOpen: () => void;
+}) {
+  const url = receiptUrl(paymentId, receipt.id);
+  if (!receipt.is_image) {
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        className="flex flex-col items-center justify-center h-24 rounded-xl border border-zinc-200 bg-zinc-50 hover:bg-white transition text-zinc-600"
+        title={receipt.original_filename || 'PDF'}
+      >
+        <span className="text-2xl">📄</span>
+        <span className="text-[11px] mt-1">PDF · открыть</span>
+      </a>
+    );
+  }
+  return (
+    <div className="relative group">
+      <button type="button" onClick={onOpen} className="block w-full" title="Открыть на весь экран">
+        <img
+          src={url}
+          alt="чек"
+          className="h-24 w-full rounded-xl object-cover border border-zinc-200 transition group-hover:brightness-95"
+        />
+        <span className="absolute bottom-1 right-1 text-[10px] bg-black/50 text-white px-1.5 py-0.5 rounded-md opacity-0 group-hover:opacity-100 transition">
+          🔍 во весь экран
+        </span>
+      </button>
+      {/* hover-превью покрупнее, по центру экрана */}
+      <img
+        src={url}
+        alt=""
+        aria-hidden
+        className="hidden group-hover:block fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-40 max-h-[70vh] max-w-[70vw] rounded-xl shadow-2xl pointer-events-none border-4 border-white"
+      />
+    </div>
+  );
+}
+
+/* ---------- Полноэкранная галерея ---------- */
+function Lightbox({
+  images, index, onIndex, onClose,
+}: {
+  images: string[];
+  index: number;
+  onIndex: (i: number) => void;
+  onClose: () => void;
+}) {
+  const prev = () => onIndex((index - 1 + images.length) % images.length);
+  const next = () => onIndex((index + 1) % images.length);
+  return (
+    <div
+      className="fixed inset-0 z-[60] bg-black/85 backdrop-blur-sm flex items-center justify-center anim-fade"
+      onClick={onClose}
+    >
+      <button
+        className="absolute top-4 right-4 size-10 rounded-full bg-white/10 text-white text-xl hover:bg-white/20"
+        onClick={onClose}
+        aria-label="Закрыть"
+      >
+        ✕
+      </button>
+      {images.length > 1 && (
+        <>
+          <button
+            className="absolute left-4 size-12 rounded-full bg-white/10 text-white text-2xl hover:bg-white/20"
+            onClick={(e) => { e.stopPropagation(); prev(); }}
+            aria-label="Назад"
+          >
+            ‹
+          </button>
+          <button
+            className="absolute right-4 size-12 rounded-full bg-white/10 text-white text-2xl hover:bg-white/20"
+            onClick={(e) => { e.stopPropagation(); next(); }}
+            aria-label="Вперёд"
+          >
+            ›
+          </button>
+        </>
+      )}
+      <img
+        src={images[index]}
+        alt="чек"
+        className="max-h-[90vh] max-w-[92vw] object-contain rounded-lg shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      />
+      {images.length > 1 && (
+        <div className="absolute bottom-5 text-white/80 text-sm">{index + 1} / {images.length}</div>
+      )}
     </div>
   );
 }

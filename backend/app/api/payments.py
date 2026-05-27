@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
+import uuid
 from decimal import Decimal
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,16 +15,44 @@ from app.bot import manager as bot_manager
 from app.models.admin import Admin
 from app.models.channel import Channel
 from app.models.payment import Payment
+from app.models.payment_receipt import PaymentReceipt
 from app.models.product import Product
 from app.models.subscription import Subscription
 from app.models.user import User
-from app.schemas.payment import PaymentCreate, PaymentOut, PaymentUpdate
+from app.schemas.payment import PaymentCreate, PaymentOut, PaymentUpdate, ReceiptOut
 from app.services import subscriptions as sub_service
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 
+# Чеки платежа: только загрузка (без edit/delete), до 3 на платёж.
+RECEIPTS_DIR = Path(os.environ.get("RECEIPTS_DIR", "/var/lib/infobizbot/receipts"))
+MAX_RECEIPTS = 3
+RECEIPT_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
+ALLOWED_RECEIPT_MIMES = {
+    "image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf",
+}
+_EXT_BY_MIME = {
+    "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+    "image/gif": ".gif", "application/pdf": ".pdf",
+}
 
-def _to_out(p: Payment, user: User | None = None, product_name: str | None = None) -> PaymentOut:
+
+def _receipt_out(r: PaymentReceipt) -> ReceiptOut:
+    return ReceiptOut(
+        id=r.id,
+        mime_type=r.mime_type,
+        is_image=r.mime_type.startswith("image/"),
+        original_filename=r.original_filename,
+        created_at=r.created_at,
+    )
+
+
+def _to_out(
+    p: Payment,
+    user: User | None = None,
+    product_name: str | None = None,
+    receipts: list[PaymentReceipt] | None = None,
+) -> PaymentOut:
     return PaymentOut(
         id=p.id,
         user_id=p.user_id,
@@ -33,6 +65,7 @@ def _to_out(p: Payment, user: User | None = None, product_name: str | None = Non
         currency=p.currency,
         comment=p.comment,
         created_at=p.created_at,
+        receipts=[_receipt_out(r) for r in (receipts or [])],
     )
 
 
@@ -58,7 +91,22 @@ async def list_payments(
     if product_id is not None:
         stmt = stmt.where(Payment.product_id == product_id)
     rows = (await session.execute(stmt)).all()
-    return [_to_out(p, u, pn) for p, u, pn in rows]
+
+    # Чеки одним запросом для всех платежей страницы (для превью в списке).
+    payment_ids = [p.id for p, _, _ in rows]
+    receipts_by_payment: dict[int, list[PaymentReceipt]] = {}
+    if payment_ids:
+        rcpts = (
+            await session.execute(
+                select(PaymentReceipt)
+                .where(PaymentReceipt.payment_id.in_(payment_ids))
+                .order_by(PaymentReceipt.id)
+            )
+        ).scalars().all()
+        for r in rcpts:
+            receipts_by_payment.setdefault(r.payment_id, []).append(r)
+
+    return [_to_out(p, u, pn, receipts_by_payment.get(p.id)) for p, u, pn in rows]
 
 
 @router.post("", response_model=PaymentOut, status_code=201)
@@ -205,3 +253,122 @@ async def delete_payment(
     await session.delete(p)
     await session.commit()
     return Response(status_code=204)
+
+
+# ===================== Чеки платежа (только загрузка) =====================
+
+def _resolve_receipt_mime(file: UploadFile) -> str | None:
+    """Определяет mime чека: content_type, иначе по расширению имени файла."""
+    mime = (file.content_type or "").lower().split(";")[0].strip()
+    if mime in ALLOWED_RECEIPT_MIMES:
+        return mime
+    name = (file.filename or "").lower()
+    by_ext = {
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+        ".webp": "image/webp", ".gif": "image/gif", ".pdf": "application/pdf",
+    }
+    for ext, m in by_ext.items():
+        if name.endswith(ext):
+            return m
+    return None
+
+
+@router.get("/{payment_id}/receipts", response_model=list[ReceiptOut])
+async def list_receipts(
+    payment_id: int,
+    _: Admin = Depends(current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> list[ReceiptOut]:
+    rows = (
+        await session.execute(
+            select(PaymentReceipt)
+            .where(PaymentReceipt.payment_id == payment_id)
+            .order_by(PaymentReceipt.id)
+        )
+    ).scalars().all()
+    return [_receipt_out(r) for r in rows]
+
+
+@router.post("/{payment_id}/receipts", response_model=list[ReceiptOut], status_code=201)
+async def upload_receipt(
+    payment_id: int,
+    file: UploadFile = File(...),
+    admin: Admin = Depends(current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> list[ReceiptOut]:
+    payment = (
+        await session.execute(select(Payment).where(Payment.id == payment_id))
+    ).scalar_one_or_none()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Платёж не найден")
+
+    existing = (
+        await session.execute(
+            select(PaymentReceipt)
+            .where(PaymentReceipt.payment_id == payment_id)
+            .order_by(PaymentReceipt.id)
+        )
+    ).scalars().all()
+    if len(existing) >= MAX_RECEIPTS:
+        raise HTTPException(status_code=409, detail=f"Уже загружено {MAX_RECEIPTS} чека — лимит")
+
+    mime = _resolve_receipt_mime(file)
+    if mime is None:
+        raise HTTPException(
+            status_code=415, detail="Допустимы изображения (jpg/png/webp/gif) или PDF"
+        )
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=422, detail="Пустой файл")
+    if len(content) > RECEIPT_MAX_BYTES:
+        raise HTTPException(
+            status_code=413, detail=f"Файл больше {RECEIPT_MAX_BYTES // (1024 * 1024)} МБ"
+        )
+
+    pdir = RECEIPTS_DIR / str(payment_id)
+    pdir.mkdir(parents=True, exist_ok=True)
+    dst = pdir / f"{uuid.uuid4().hex}{_EXT_BY_MIME.get(mime, '')}"
+    dst.write_bytes(content)
+
+    rec = PaymentReceipt(
+        payment_id=payment_id,
+        storage_path=str(dst),
+        original_filename=file.filename,
+        mime_type=mime,
+        file_size=len(content),
+        uploaded_by=admin.id,
+    )
+    session.add(rec)
+    await session.flush()
+
+    from app.services.audit import log_action
+    await log_action(
+        session, admin_id=admin.id, action="create",
+        resource_type="payment_receipt", resource_id=rec.id,
+        summary=f"Чек к платежу #{payment_id}",
+        payload={"payment_id": payment_id, "filename": file.filename, "size": len(content)},
+    )
+    await session.commit()
+
+    existing.append(rec)
+    return [_receipt_out(r) for r in existing]
+
+
+@router.get("/{payment_id}/receipts/{receipt_id}/file")
+async def get_receipt_file(
+    payment_id: int,
+    receipt_id: int,
+    _: Admin = Depends(current_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    """Отдаёт файл чека — для превью/полноэкранного просмотра во фронте."""
+    rec = await session.get(PaymentReceipt, receipt_id)
+    if rec is None or rec.payment_id != payment_id:
+        raise HTTPException(status_code=404, detail="Чек не найден")
+    if not rec.storage_path or not os.path.exists(rec.storage_path):
+        raise HTTPException(status_code=404, detail="Файл не найден на диске")
+    return FileResponse(
+        rec.storage_path,
+        media_type=rec.mime_type,
+        filename=rec.original_filename or f"receipt_{receipt_id}",
+    )

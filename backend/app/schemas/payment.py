@@ -22,6 +22,16 @@ class PaymentUpdate(BaseModel):
     comment: str | None = None
 
 
+class ReceiptOut(BaseModel):
+    id: int
+    mime_type: str
+    is_image: bool
+    original_filename: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
 class PaymentOut(BaseModel):
     id: int
     user_id: int
@@ -34,5 +44,6 @@ class PaymentOut(BaseModel):
     currency: str
     comment: str | None
     created_at: datetime
+    receipts: list[ReceiptOut] = []
 
     model_config = {"from_attributes": True}
