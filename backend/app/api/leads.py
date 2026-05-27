@@ -8,14 +8,28 @@ from app.api.deps import current_admin, get_session
 from app.models.admin import Admin
 from app.models.channel import Channel
 from app.models.lead import Lead
+from app.models.payment import Payment
 from app.models.product import Product
 from app.models.user import User
-from app.schemas.lead import LeadOut, LeadUpdate
+from app.schemas.lead import PAYMENT_REQUIRED_STATUSES, LeadOut, LeadUpdate
 
 router = APIRouter(prefix="/leads", tags=["leads"])
 
+# Частые причины отмены — для дропдауна в UI. Своя причина вводится текстом.
+CANCEL_REASON_PRESETS = [
+    "Дорого",
+    "Передумал / не актуально",
+    "Нет денег сейчас",
+    "Купил у конкурента",
+    "Не выходит на связь",
+    "Ошибочная / тестовая заявка",
+    "Не подошли условия",
+]
 
-def _to_out(lead: Lead, user: User, product: Product, channel: Channel) -> LeadOut:
+
+def _to_out(
+    lead: Lead, user: User, product: Product, channel: Channel, payment: Payment | None = None
+) -> LeadOut:
     return LeadOut(
         id=lead.id,
         status=lead.status,
@@ -39,6 +53,11 @@ def _to_out(lead: Lead, user: User, product: Product, channel: Channel) -> LeadO
         product_price_12m=product.price_12m,
         channel_id=channel.id,
         channel_title=channel.title,
+        payment_id=lead.payment_id,
+        payment_amount=payment.amount if payment else None,
+        payment_currency=payment.currency if payment else None,
+        cancel_reason=lead.cancel_reason,
+        cancelled_at=lead.cancelled_at,
     )
 
 
@@ -51,10 +70,11 @@ async def list_leads(
     offset: int = Query(default=0, ge=0),
 ) -> dict:
     stmt = (
-        select(Lead, User, Product, Channel)
+        select(Lead, User, Product, Channel, Payment)
         .join(User, User.id == Lead.user_id)
         .join(Product, Product.id == Lead.product_id)
         .join(Channel, Channel.id == Product.channel_id)
+        .outerjoin(Payment, Payment.id == Lead.payment_id)
         .order_by(Lead.id.desc())
     )
     count_stmt = select(func.count()).select_from(Lead)
@@ -65,7 +85,28 @@ async def list_leads(
     rows = (await session.execute(stmt.limit(limit).offset(offset))).all()
     return {
         "total": total,
-        "items": [_to_out(l, u, p, c).model_dump(mode="json") for l, u, p, c in rows],
+        "items": [_to_out(l, u, p, c, pay).model_dump(mode="json") for l, u, p, c, pay in rows],
+    }
+
+
+@router.get("/cancel-reasons")
+async def cancel_reasons_summary(
+    _: Admin = Depends(current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Частота причин отмены (для дашборда) + список пресетов для UI."""
+    rows = (
+        await session.execute(
+            select(Lead.cancel_reason, func.count())
+            .where(Lead.status == "cancelled", Lead.cancel_reason.is_not(None))
+            .group_by(Lead.cancel_reason)
+            .order_by(func.count().desc())
+        )
+    ).all()
+    return {
+        "presets": CANCEL_REASON_PRESETS,
+        "breakdown": [{"reason": r, "count": c} for r, c in rows],
+        "total": sum(c for _, c in rows),
     }
 
 
@@ -77,17 +118,18 @@ async def get_lead(
 ) -> LeadOut:
     row = (
         await session.execute(
-            select(Lead, User, Product, Channel)
+            select(Lead, User, Product, Channel, Payment)
             .join(User, User.id == Lead.user_id)
             .join(Product, Product.id == Lead.product_id)
             .join(Channel, Channel.id == Product.channel_id)
+            .outerjoin(Payment, Payment.id == Lead.payment_id)
             .where(Lead.id == lead_id)
         )
     ).one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="Заявка не найдена")
-    l, u, p, c = row
-    return _to_out(l, u, p, c)
+    l, u, p, c, pay = row
+    return _to_out(l, u, p, c, pay)
 
 
 @router.patch("/{lead_id}", response_model=LeadOut)
@@ -100,21 +142,60 @@ async def update_lead(
     lead = (await session.execute(select(Lead).where(Lead.id == lead_id))).scalar_one_or_none()
     if not lead:
         raise HTTPException(status_code=404, detail="Заявка не найдена")
-    # Фиксируем timestamp смены статуса — только при первом переходе
+
     from datetime import datetime, timezone
     now = datetime.now(tz=timezone.utc)
-    field_map = {"contacted": "contacted_at", "paid": "paid_at", "closed": "closed_at"}
+
+    # paid/closed подразумевают сделку → обязателен привязанный платёж.
+    if payload.status in PAYMENT_REQUIRED_STATUSES:
+        target_payment_id = payload.payment_id or lead.payment_id
+        if target_payment_id is None:
+            raise HTTPException(
+                status_code=422,
+                detail="Статус требует платёж. Привяжите существующий платёж или создайте новый.",
+            )
+        payment = (
+            await session.execute(select(Payment).where(Payment.id == target_payment_id))
+        ).scalar_one_or_none()
+        if payment is None:
+            raise HTTPException(status_code=422, detail="Платёж не найден")
+        if payment.user_id != lead.user_id:
+            raise HTTPException(
+                status_code=422, detail="Платёж принадлежит другому пользователю"
+            )
+        lead.payment_id = payment.id
+
+    # cancelled → обязательна причина отмены.
+    if payload.status == "cancelled":
+        reason = (payload.cancel_reason or "").strip()
+        if not reason:
+            raise HTTPException(status_code=422, detail="Укажите причину отмены")
+        lead.cancel_reason = reason
+
+    # Таймстампы смены статуса — только при первом переходе.
+    field_map = {
+        "contacted": "contacted_at",
+        "paid": "paid_at",
+        "closed": "closed_at",
+        "cancelled": "cancelled_at",
+    }
     ts_field = field_map.get(payload.status)
     if ts_field and getattr(lead, ts_field) is None:
         setattr(lead, ts_field, now)
+
     lead.status = payload.status
     await session.commit()
     await session.refresh(lead)
-    # Загрузим связные сущности
+
     user = (await session.execute(select(User).where(User.id == lead.user_id))).scalar_one()
     product = (await session.execute(select(Product).where(Product.id == lead.product_id))).scalar_one()
     channel = (await session.execute(select(Channel).where(Channel.id == product.channel_id))).scalar_one()
-    return _to_out(lead, user, product, channel)
+    payment = None
+    if lead.payment_id is not None:
+        payment = (
+            await session.execute(select(Payment).where(Payment.id == lead.payment_id))
+        ).scalar_one_or_none()
+    return _to_out(lead, user, product, channel, payment)
 
 
 @router.delete("/{lead_id}", status_code=204, response_class=Response)

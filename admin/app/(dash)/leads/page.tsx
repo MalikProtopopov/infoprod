@@ -24,16 +24,19 @@ type Lead = {
 
 type Resp = { total: number; items: Lead[] };
 
-const TABS: Array<{ key: 'new' | 'contacted' | 'paid' | 'closed' | 'all'; label: string }> = [
+type LeadStatusKey = 'new' | 'contacted' | 'paid' | 'closed' | 'cancelled' | 'all';
+
+const TABS: Array<{ key: LeadStatusKey; label: string }> = [
   { key: 'new', label: 'Новые' },
   { key: 'contacted', label: 'Связались' },
   { key: 'paid', label: 'Оплачены' },
-  { key: 'closed', label: 'Закрытые' },
+  { key: 'closed', label: 'Завершённые' },
+  { key: 'cancelled', label: 'Отменённые' },
   { key: 'all', label: 'Все' },
 ];
 
 export default function LeadsPage() {
-  const [status, setStatus] = useState<'all' | 'new' | 'contacted' | 'paid' | 'closed'>('new');
+  const [status, setStatus] = useState<LeadStatusKey>('new');
   const { data, isLoading } = useSWR<Resp>(`/leads?status=${status}&limit=200`, fetcher);
 
   return (
@@ -109,6 +112,7 @@ function LeadStatusPill({ s }: { s: string }) {
   if (s === 'new') return <Pill color="amber">новая</Pill>;
   if (s === 'contacted') return <Pill color="gray">связались</Pill>;
   if (s === 'paid') return <Pill color="green">оплачена</Pill>;
-  if (s === 'closed') return <Pill color="red">закрыта</Pill>;
+  if (s === 'closed') return <Pill color="green">завершена</Pill>;
+  if (s === 'cancelled') return <Pill color="red">отменена</Pill>;
   return <Pill color="gray">{s}</Pill>;
 }

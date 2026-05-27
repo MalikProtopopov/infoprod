@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,15 +44,20 @@ def _price_for_period(product: Product, period_months: int) -> Decimal:
 async def list_payments(
     _: Admin = Depends(current_admin),
     session: AsyncSession = Depends(get_session),
+    user_id: int | None = Query(default=None),
+    product_id: int | None = Query(default=None),
 ) -> list[PaymentOut]:
-    rows = (
-        await session.execute(
-            select(Payment, User, Product.name)
-            .join(User, User.id == Payment.user_id)
-            .join(Product, Product.id == Payment.product_id)
-            .order_by(Payment.id.desc())
-        )
-    ).all()
+    stmt = (
+        select(Payment, User, Product.name)
+        .join(User, User.id == Payment.user_id)
+        .join(Product, Product.id == Payment.product_id)
+        .order_by(Payment.id.desc())
+    )
+    if user_id is not None:
+        stmt = stmt.where(Payment.user_id == user_id)
+    if product_id is not None:
+        stmt = stmt.where(Payment.product_id == product_id)
+    rows = (await session.execute(stmt)).all()
     return [_to_out(p, u, pn) for p, u, pn in rows]
 
 
@@ -137,6 +142,8 @@ async def create_payment(
         last_lead.status = "paid"
         if last_lead.paid_at is None:
             last_lead.paid_at = datetime.now(tz=timezone.utc)
+        # Привязываем платёж к заявке (обратная связь для целостности).
+        last_lead.payment_id = payment.id
 
     # NEW: автоотмена активных воронок на этот продукт
     from app.services.funnels import FunnelsService

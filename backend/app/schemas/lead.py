@@ -7,11 +7,19 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-LeadStatus = Literal["new", "contacted", "paid", "closed"]
+LeadStatus = Literal["new", "contacted", "paid", "closed", "cancelled"]
+
+# Статусы, подразумевающие сделку → требуют привязанный платёж.
+PAYMENT_REQUIRED_STATUSES = {"paid", "closed"}
 
 
 class LeadUpdate(BaseModel):
     status: LeadStatus
+    # для paid/closed — привязать существующий платёж (если не передан, но платёж
+    # уже привязан ранее, используется он; иначе API вернёт 422)
+    payment_id: int | None = None
+    # для cancelled — причина отмены (пресет или произвольный текст)
+    cancel_reason: str | None = Field(default=None, max_length=500)
 
 
 class LeadOut(BaseModel):
@@ -40,5 +48,11 @@ class LeadOut(BaseModel):
     # канал, к которому ведёт продукт
     channel_id: int
     channel_title: str
+    # --- сделка / отмена ---
+    payment_id: int | None = None
+    payment_amount: Decimal | None = None
+    payment_currency: str | None = None
+    cancel_reason: str | None = None
+    cancelled_at: datetime | None = None
 
     model_config = {"from_attributes": True}

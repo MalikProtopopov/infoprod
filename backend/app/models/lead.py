@@ -4,7 +4,7 @@ from datetime import datetime
 
 from typing import Any
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -38,7 +38,16 @@ class Lead(Base):
     utm_medium: Mapped[str | None] = mapped_column(String(255), nullable=True)
     utm_campaign: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    # --- привязка к платежу (paid/closed требуют платёж) ---
+    payment_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("payments.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    # --- отмена заявки (status='cancelled') ---
+    cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # --- материализованные таймстампы смены статуса ---
     contacted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

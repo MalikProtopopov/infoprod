@@ -194,6 +194,8 @@ export default function DashboardPage() {
             )}
           </section>
 
+          {isOn('leads') && <CancelReasonsCard />}
+
           <section className="mt-6 grid grid-cols-1 lg:grid-cols-3 gap-5">
             <CatalogCard label="Продукты" value={data.catalog.products} hint="карточки каналов" href="/products" />
             <CatalogCard label="Каналы" value={data.catalog.channels} hint="закрытые TG-каналы" href="/channels" />
@@ -202,6 +204,38 @@ export default function DashboardPage() {
         </>
       )}
     </div>
+  );
+}
+
+function CancelReasonsCard() {
+  const { data } = useSWR<{ breakdown: { reason: string; count: number }[]; total: number }>(
+    '/leads/cancel-reasons', fetcher, { refreshInterval: 60_000 },
+  );
+  if (!data || data.total === 0) return null;
+  const max = Math.max(...data.breakdown.map((b) => b.count), 1);
+  return (
+    <section className="mt-6">
+      <Card padded className="anim-rise">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="text-base font-semibold tracking-tight">Причины отмены</h3>
+            <p className="text-xs text-zinc-500">Почему заявки не закрылись — {data.total} всего</p>
+          </div>
+          <Link href="/leads?status=cancelled" className="text-xs text-indigo-600 hover:text-indigo-800 transition">Отменённые →</Link>
+        </div>
+        <ul className="space-y-2">
+          {data.breakdown.map((b) => (
+            <li key={b.reason} className="flex items-center gap-3">
+              <span className="text-sm text-ink w-48 shrink-0 truncate" title={b.reason}>{b.reason}</span>
+              <div className="flex-1 h-2 rounded-full bg-zinc-100 overflow-hidden">
+                <div className="h-full rounded-full bg-rose-400" style={{ width: `${(b.count / max) * 100}%` }} />
+              </div>
+              <span className="text-sm font-medium tabular-nums w-8 text-right">{b.count}</span>
+            </li>
+          ))}
+        </ul>
+      </Card>
+    </section>
   );
 }
 
