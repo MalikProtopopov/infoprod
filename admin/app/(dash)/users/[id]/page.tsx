@@ -406,6 +406,7 @@ function LeadStatus({ s }: { s: string }) {
   if (s === 'new') return <Pill color="amber">новая</Pill>;
   if (s === 'contacted') return <Pill color="gray">связались</Pill>;
   if (s === 'paid') return <Pill color="green">оплачена</Pill>;
-  if (s === 'closed') return <Pill color="red">закрыта</Pill>;
+  if (s === 'closed') return <Pill color="green">завершена</Pill>;
+  if (s === 'cancelled') return <Pill color="red">отменена</Pill>;
   return <Pill color="gray">{s}</Pill>;
 }

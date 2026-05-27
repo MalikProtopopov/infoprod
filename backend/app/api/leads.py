@@ -163,6 +163,10 @@ async def update_lead(
             raise HTTPException(
                 status_code=422, detail="Платёж принадлежит другому пользователю"
             )
+        if lead.product_id is not None and payment.product_id != lead.product_id:
+            raise HTTPException(
+                status_code=422, detail="Платёж за другой продукт"
+            )
         lead.payment_id = payment.id
 
     # cancelled → обязательна причина отмены.

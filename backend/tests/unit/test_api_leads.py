@@ -69,6 +69,18 @@ async def test_patch_lead_paid_rejects_foreign_payment(admin_client, make_commit
 
 
 @pytest.mark.asyncio
+async def test_patch_lead_paid_rejects_wrong_product_payment(admin_client, make_committed, clean_db):
+    """Платёж того же юзера, но за другой продукт — нельзя привязать → 422."""
+    lead = await make_committed.lead(status="contacted")
+    other_product = await make_committed.product()
+    payment = await make_committed.payment(user_id=lead.user_id, product_id=other_product.id)
+    r = await admin_client.patch(
+        f"/api/leads/{lead.id}", json={"status": "paid", "payment_id": payment.id}
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_patch_lead_closed_requires_payment(admin_client, make_committed, clean_db):
     lead = await make_committed.lead(status="contacted")
     assert (await admin_client.patch(f"/api/leads/{lead.id}", json={"status": "closed"})).status_code == 422
