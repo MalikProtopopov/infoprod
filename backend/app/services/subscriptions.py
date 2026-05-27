@@ -65,7 +65,13 @@ async def grant_for_payment(session: AsyncSession, payment: Payment) -> Subscrip
     bot = bot_manager.get_aiogram_bot(channel.bot_id)
     invite_link: Optional[str] = None
     if bot is not None:
-        invite_link = await tg.create_one_time_invite(bot, channel.telegram_chat_id, expire_at=sub.ends_at)
+        # Сбой Telegram (бот выкинут из канала, rate-limit, сеть) не должен ронять
+        # весь платёж: подписка уже создана. Инвайт тогда None — досылается вручную.
+        try:
+            invite_link = await tg.create_one_time_invite(bot, channel.telegram_chat_id, expire_at=sub.ends_at)
+        except Exception:  # noqa: BLE001
+            logger.warning("grant_for_payment.invite_failed channel_id=%s", channel.id)
+            invite_link = None
         if invite_link:
             sub.invite_link = invite_link
             await session.flush()

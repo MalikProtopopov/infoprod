@@ -74,11 +74,14 @@ def configure_logging(level: str | None = None) -> None:
             ]
         ),
         _mask_secrets_processor,
-        structlog.processors.dict_tracebacks,
     ]
     if ENV in ("development", "test"):
+        # ConsoleRenderer сам красиво форматирует исключения — dict_tracebacks
+        # здесь несовместим (он отдаёт list, а рендерер делает "\n"+exc → TypeError).
         processors.append(structlog.dev.ConsoleRenderer())
     else:
+        # В проде — структурный JSON: dict_tracebacks разворачивает traceback в dict.
+        processors.append(structlog.processors.dict_tracebacks)
         processors.append(structlog.processors.JSONRenderer())
 
     structlog.configure(

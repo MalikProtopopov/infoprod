@@ -178,10 +178,6 @@ async def test_renders_first_name_in_template(session, make, patch_bot_manager):
     assert "Alice" in sent_args.args[1]
 
 
-@pytest.mark.xfail(
-    reason="race в полном прогоне; изолированно проходит. Видимо structlog state-leak",
-    strict=False,
-)
 @pytest.mark.asyncio
 async def test_marks_failed_on_exception(session, make, patch_bot_manager):
     """Если send_message бросает — помечается failed, attempts++."""

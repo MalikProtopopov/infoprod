@@ -75,6 +75,49 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Infobizbot API", version="1.0.0", lifespan=lifespan)
 
+
+# ───────── Глобальные обработчики ошибок ─────────
+# Любая непойманная ошибка должна возвращаться как JSON (а не сырой text/plain
+# «Internal Server Error» — на нём падал фронт с «Unexpected token I»).
+from fastapi import Request  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
+from sqlalchemy.exc import IntegrityError  # noqa: E402
+
+
+@app.exception_handler(IntegrityError)
+async def _integrity_error_handler(request: Request, exc: IntegrityError):
+    """Нарушение целостности БД (FK RESTRICT / UNIQUE) → 409 JSON.
+
+    Defense-in-depth: даже если конкретный эндпойнт не сделал ручной guard,
+    клиент получит понятный 409, а не 500. Сессия откатывается зависимостью
+    get_session (выход из `async with` при исключении)."""
+    logger.warning("integrity_error", path=request.url.path, error=str(exc.orig) if exc.orig else str(exc))
+    return JSONResponse(
+        status_code=409,
+        content={
+            "detail": "Операция нарушает целостность данных: есть связанные записи "
+            "или значение уже занято.",
+            "request_id": getattr(request.state, "request_id", None),
+        },
+    )
+
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    """Любая прочая непойманная ошибка → 500 JSON (а не plain-text).
+
+    Деталь ошибки наружу не отдаём (безопасность); по request_id её можно найти
+    в логах (`request.unhandled_exception`)."""
+    logger.exception("unhandled_exception", path=request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Внутренняя ошибка сервера. Попробуйте позже.",
+            "request_id": getattr(request.state, "request_id", None),
+        },
+    )
+
+
 # Middleware — request_id первым, чтобы все остальные слои уже несли его в контексте
 app.add_middleware(RequestContextMiddleware)
 # Авто-аудит всех аутентифицированных мутаций (POST/PATCH/PUT/DELETE под /api)

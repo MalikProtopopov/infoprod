@@ -156,3 +156,25 @@ async def test_delete_payment_revokes_related_subscription(
 async def test_delete_unknown_payment_404(admin_client, clean_db):
     r = await admin_client.delete("/api/payments/99999")
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_payment_succeeds_when_invite_fails(admin_client, make_committed, clean_db, monkeypatch):
+    """Сбой Telegram при выдаче инвайта НЕ должен ронять платёж (подписка создаётся)."""
+    from tests.helpers import payment_form
+
+    monkeypatch.setattr("app.bot.manager.get_aiogram_bot", lambda _: MagicMock())
+    # create_one_time_invite падает (бот выкинут из канала / сеть)
+    monkeypatch.setattr(
+        "app.services.subscriptions.tg.create_one_time_invite",
+        AsyncMock(side_effect=RuntimeError("telegram down")),
+    )
+    monkeypatch.setattr("app.services.subscriptions.tg.send_message_safe", AsyncMock(return_value=True))
+
+    product = await make_committed.product(price_3m=1000)
+    user = await make_committed.user()
+    r = await admin_client.post(
+        "/api/payments",
+        **payment_form(user_id=user.id, product_id=product.id, period_months=3),
+    )
+    assert r.status_code == 201, r.text  # платёж создан несмотря на сбой инвайта

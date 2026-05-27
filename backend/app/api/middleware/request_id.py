@@ -21,6 +21,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Уважаем входящий X-Request-ID (nginx или клиент); иначе генерим
         req_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+        request.state.request_id = req_id  # доступно в exception-handler'ах
 
         clear_contextvars()
         bind_contextvars(
