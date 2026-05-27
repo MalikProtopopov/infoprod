@@ -37,6 +37,7 @@ os.environ.setdefault("SENTRY_DSN", "")  # выключаем Sentry в тест
 # Файловое хранилище в тестах — во временную папку (прод-путь /var/lib не пишется).
 os.environ.setdefault("RECEIPTS_DIR", tempfile.mkdtemp(prefix="test-receipts-"))
 os.environ.setdefault("STEP_MEDIA_DIR", tempfile.mkdtemp(prefix="test-stepmedia-"))
+os.environ.setdefault("PRODUCT_MEDIA_DIR", tempfile.mkdtemp(prefix="test-productmedia-"))
 
 
 # ---------- session-level: один Postgres контейнер ----------

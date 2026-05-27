@@ -28,6 +28,7 @@ from app.api.products import router as products_router  # noqa: E402
 from app.api.stats import router as stats_router  # noqa: E402
 from app.api.stats import overview_router as stats_overview_router  # noqa: E402
 from app.api.config import router as config_router  # noqa: E402
+from app.api.product_content import router as product_content_router  # noqa: E402
 from app.api.subscriptions import router as subscriptions_router  # noqa: E402
 from app.api.tracking_links import router as tracking_links_router  # noqa: E402
 from app.api.users import router as users_router  # noqa: E402
@@ -106,6 +107,7 @@ CORE_ROUTERS = (
     audit_router,
     feature_requests_router,
     config_router,
+    product_content_router,  # контент-блоки продукта (часть каталога)
     stats_overview_router,  # /stats/overview — нужен главной админки всегда
 )
 

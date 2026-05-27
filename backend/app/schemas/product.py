@@ -31,6 +31,9 @@ class ProductUpdate(BaseModel):
     currency: str | None = None
     is_active: bool | None = None
     default_funnel_id: int | None = None
+    card_text: str | None = None
+    thank_you_message: str | None = None
+    presentation_enabled: bool | None = None
 
 
 class ProductOut(BaseModel):
@@ -47,6 +50,9 @@ class ProductOut(BaseModel):
     currency: str
     is_active: bool
     default_funnel_id: int | None = None
+    card_text: str | None = None
+    thank_you_message: str | None = None
+    presentation_enabled: bool = True
     created_at: datetime
 
     model_config = {"from_attributes": True}

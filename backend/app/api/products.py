@@ -30,6 +30,9 @@ def _to_out(p: Product, channel_title: str | None = None) -> ProductOut:
         currency=p.currency,
         is_active=p.is_active,
         default_funnel_id=p.default_funnel_id,
+        card_text=p.card_text,
+        thank_you_message=p.thank_you_message,
+        presentation_enabled=p.presentation_enabled,
         created_at=p.created_at,
     )
 

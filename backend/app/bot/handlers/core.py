@@ -32,10 +32,12 @@ from app.bot.handlers.common import (
     _resolve_bot_id,
     _send_catalog,
     _send_flow_messages,
+    _send_main_menu,
     _send_product_card,
     _set_current_link,
     _set_first_touch,
     _upsert_user,
+    present_product,
 )
 from app.core.features import is_enabled
 from app.db.session import SessionLocal
@@ -129,18 +131,13 @@ async def start_with_arg(m: Message, command: CommandObject, bot: Bot) -> None:
         if new_entry_id is not None:
             await _flush_funnel_entry_now(new_entry_id)
 
-        # Шаг 5: показать карточку / каталог / уведомление об устаревшей ссылке
+        # Шаг 5: презентация продукта (deep-link) / меню / уведомление об устаревшей ссылке
         if product:
-            await _send_product_card(m, product)
+            await present_product(bot, m, product)
             return
         if arg:
             await m.answer(texts.LINK_EXPIRED_OR_INVALID)
-        products = (
-            await session.execute(
-                select(Product).where(Product.is_active.is_(True)).order_by(Product.id.desc())
-            )
-        ).scalars().all()
-        await _send_catalog(m, products, setup_nav=True)
+        await _send_main_menu(m, setup_nav=True)
 
 
 @router.message(CommandStart())
@@ -157,13 +154,7 @@ async def start_plain(m: Message, bot: Bot) -> None:
                 tracking_link=None,
             )
         await session.commit()
-
-        products = (
-            await session.execute(
-                select(Product).where(Product.is_active.is_(True)).order_by(Product.id.desc())
-            )
-        ).scalars().all()
-    await _send_catalog(m, products, setup_nav=True)
+    await _send_main_menu(m, setup_nav=True)
 
 
 @router.message(Command("help"))
@@ -201,7 +192,7 @@ async def cmd_my(m: Message) -> None:
 
 
 @router.callback_query(F.data.startswith("prod:"))
-async def cb_product(cb: CallbackQuery) -> None:
+async def cb_product(cb: CallbackQuery, bot: Bot) -> None:
     product_id = int(cb.data.split(":", 1)[1])
     async with SessionLocal() as session:
         await _upsert_user(session, cb)
@@ -214,8 +205,8 @@ async def cb_product(cb: CallbackQuery) -> None:
         if not product:
             await cb.answer(texts.PRODUCT_NOT_FOUND, show_alert=True)
             return
-        await _send_product_card(cb, product)
-        await cb.answer()
+    await cb.answer()  # закрываем «часики» до (возможно долгой) презентации
+    await present_product(bot, cb, product)
 
 
 @router.message(F.text & ~F.text.startswith("/"))

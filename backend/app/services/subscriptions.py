@@ -77,6 +77,11 @@ async def grant_for_payment(session: AsyncSession, payment: Payment) -> Subscrip
         )
         await tg.send_message_safe(bot, user.telegram_user_id, text)
 
+        # Благодарственное сообщение продукта (если настроено) — отдельным сообщением.
+        thank_you = getattr(product, "thank_you_message", None)
+        if thank_you and thank_you.strip():
+            await tg.send_message_safe(bot, user.telegram_user_id, thank_you)
+
     return sub
 
 

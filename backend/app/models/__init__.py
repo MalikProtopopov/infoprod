@@ -2,6 +2,7 @@ from app.models.admin import Admin  # noqa: F401
 from app.models.bot import Bot  # noqa: F401
 from app.models.channel import Channel  # noqa: F401
 from app.models.product import Product  # noqa: F401
+from app.models.product_content import ProductContentBlock, ProductMedia  # noqa: F401
 from app.models.tracking_link import TrackingLink  # noqa: F401
 from app.models.user import User  # noqa: F401
 from app.models.lead import Lead  # noqa: F401

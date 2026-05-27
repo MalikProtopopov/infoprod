@@ -151,8 +151,26 @@ def _catalog_kb(products: list[Product]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _main_menu_kb() -> InlineKeyboardMarkup:
+    """Главное меню (разделы). Сейчас — «Продукты»; расширяемо новыми секциями."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📦 Смотреть продукты", callback_data="menu:main")],
+        ]
+    )
+
+
+async def _send_main_menu(target: Message, *, setup_nav: bool = True) -> None:
+    """Приветствие + разделы при /start (welcome → меню → каталог)."""
+    if setup_nav:
+        await target.answer(texts.WELCOME, reply_markup=_main_reply_kb())
+    await target.answer(texts.MENU_HEADER, reply_markup=_main_menu_kb())
+
+
 async def _send_product_card(target: Message | CallbackQuery, product: Product) -> None:
-    text = texts.product_card(
+    # Если задан стилизованный card_text — используем его (с цитатами/спойлерами),
+    # иначе — сгенерированную карточку с ценами.
+    text = getattr(product, "card_text", None) or texts.product_card(
         product.name,
         product.description,
         product.price_3m,
@@ -162,6 +180,20 @@ async def _send_product_card(target: Message | CallbackQuery, product: Product) 
     )
     msg = target if isinstance(target, Message) else target.message
     await msg.answer(text, reply_markup=_product_kb(product.id), parse_mode=ParseMode.HTML)
+
+
+async def present_product(bot: Bot, target: Message | CallbackQuery, product: Product) -> None:
+    """Презентация продукта: сначала контент-блоки (кружок/видео/галерея/голос),
+    затем карточка с ценами и CTA «Оставить заявку». Эффект «живого» менеджера."""
+    from app.bot.presentation import send_presentation
+
+    # В личке chat_id == from_user.id; так не зависим от структуры message.
+    chat_id = target.from_user.id
+    try:
+        await send_presentation(bot, chat_id, product)
+    except Exception:  # noqa: BLE001 — презентация best-effort, карточку покажем всё равно
+        logger.warning("present_product.presentation_failed product_id=%s", product.id)
+    await _send_product_card(target, product)
 
 
 async def _send_catalog(target: Message, products: list[Product], *, setup_nav: bool = False) -> None:

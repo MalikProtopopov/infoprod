@@ -31,6 +31,16 @@ class Product(Base):
     default_funnel_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("funnels.id", ondelete="SET NULL"), nullable=True
     )
+    # --- Контент карточки в боте ---
+    # Стилизованный текст карточки (HTML: b/i/u/s, blockquote expandable, spoiler, ссылки).
+    # Если пусто — используется plain `description`.
+    card_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Благодарственное сообщение после покупки (стилизованное).
+    thank_you_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Слать ли блоки презентации при открытии продукта.
+    presentation_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default="true", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     channel: Mapped["Channel"] = relationship(back_populates="products")

@@ -9,6 +9,8 @@ import {
   Button, Card, Empty, Field, Input, PageHeader, Pill, Select, Sheet,
   TableHead, TableWrap, Td, Textarea, Th, Tr,
 } from '@/components/ui';
+import { RichTextEditor } from '@/components/RichTextEditor';
+import { ProductContentEditor } from '@/components/ProductContentEditor';
 
 type Product = {
   id: number;
@@ -24,6 +26,9 @@ type Product = {
   currency: string;
   is_active: boolean;
   default_funnel_id: number | null;
+  card_text: string | null;
+  thank_you_message: string | null;
+  presentation_enabled: boolean;
 };
 
 type Channel = { id: number; title: string };
@@ -36,12 +41,14 @@ export default function ProductsPage() {
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
+  const [contentFor, setContentFor] = useState<Product | null>(null);
   const [form, setForm] = useState({
     code: '', name: '', description: '', cover_url: '',
     channel_id: '' as number | '',
     price_3m: '0', price_6m: '0', price_12m: '0',
     currency: 'RUB', is_active: true,
     default_funnel_id: '' as number | '',
+    card_text: '', thank_you_message: '', presentation_enabled: true,
   });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -52,6 +59,7 @@ export default function ProductsPage() {
       code: '', name: '', description: '', cover_url: '',
       channel_id: '', price_3m: '0', price_6m: '0', price_12m: '0',
       currency: 'RUB', is_active: true, default_funnel_id: '',
+      card_text: '', thank_you_message: '', presentation_enabled: true,
     });
     setError(null); setOpen(true);
   }
@@ -64,6 +72,8 @@ export default function ProductsPage() {
       price_3m: p.price_3m, price_6m: p.price_6m, price_12m: p.price_12m,
       currency: p.currency, is_active: p.is_active,
       default_funnel_id: p.default_funnel_id ?? '',
+      card_text: p.card_text ?? '', thank_you_message: p.thank_you_message ?? '',
+      presentation_enabled: p.presentation_enabled,
     });
     setError(null); setOpen(true);
   }
@@ -82,9 +92,12 @@ export default function ProductsPage() {
       currency: form.currency || 'RUB',
       is_active: form.is_active,
     };
-    // default_funnel_id передаём только в update — на create продукта ещё нет
+    // default_funnel_id и контент-поля — только в update (на create продукта ещё нет)
     if (editing) {
       payload.default_funnel_id = form.default_funnel_id ? Number(form.default_funnel_id) : null;
+      payload.card_text = form.card_text || null;
+      payload.thank_you_message = form.thank_you_message || null;
+      payload.presentation_enabled = form.presentation_enabled;
     }
     try {
       if (editing) await api.patch(`/products/${editing.id}`, payload);
@@ -246,9 +259,44 @@ export default function ProductsPage() {
             />
             <span>Активен</span>
           </label>
+
+          {editing && (
+            <div className="space-y-4 pt-3 border-t border-zinc-100">
+              <div className="text-xs uppercase tracking-wide text-zinc-500 font-medium">Контент в боте</div>
+              <Field label="Текст карточки" hint="Стили: жирный, цитата (в т.ч. раскрывающаяся), спойлер. Если пусто — авто-карточка с ценами.">
+                <RichTextEditor rows={4} value={form.card_text} onChange={(v) => setForm({ ...form, card_text: v })} placeholders={['first_name', 'username']} />
+              </Field>
+              <Field label="Благодарственное сообщение" hint="Отправится после успешной покупки">
+                <RichTextEditor rows={3} value={form.thank_you_message} onChange={(v) => setForm({ ...form, thank_you_message: v })} placeholders={['first_name', 'username']} />
+              </Field>
+              <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" checked={form.presentation_enabled}
+                  onChange={(e) => setForm({ ...form, presentation_enabled: e.target.checked })}
+                  className="size-4 rounded border-zinc-300 text-indigo-600 focus:ring-indigo-400" />
+                <span>Показывать презентацию (блоки) при открытии продукта</span>
+              </label>
+              <div>
+                <Button variant="glass" onClick={() => setContentFor(editing)}>🎬 Блоки презентации</Button>
+                <p className="mt-1 text-xs text-zinc-500">Кружок, видео, галерея фото, голос + текст — последовательно, как «живой» менеджер.</p>
+              </div>
+            </div>
+          )}
+
           {error && <div className="text-sm text-rose-600 bg-rose-50/80 border border-rose-200/60 rounded-xl px-3 py-2">{error}</div>}
         </div>
       </Sheet>
+
+      {contentFor && (
+        <Sheet
+          open
+          onClose={() => setContentFor(null)}
+          title={`Блоки презентации — ${contentFor.name}`}
+          description="Последовательность сообщений при открытии продукта в боте. Перетаскивайте порядок стрелками."
+          footer={<Button variant="ghost" onClick={() => setContentFor(null)}>Закрыть</Button>}
+        >
+          <ProductContentEditor productId={contentFor.id} />
+        </Sheet>
+      )}
     </div>
   );
 }

@@ -1,0 +1,46 @@
+"""Смоук презентации продукта: блоки отправляются нужными методами бота."""
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+import app.db.session as dbs
+from app.bot.presentation import send_presentation
+from app.models.product_content import ProductContentBlock, ProductMedia
+
+
+@pytest.mark.asyncio
+async def test_send_presentation_sends_text_and_video_note(make_committed, clean_db):
+    product = await make_committed.product()
+    async with dbs.SessionLocal() as s:
+        b_text = ProductContentBlock(product_id=product.id, order_idx=0, kind="text",
+                                     text="Привет! 👋", delay_ms=0)
+        b_note = ProductContentBlock(product_id=product.id, order_idx=1, kind="video_note", delay_ms=0)
+        s.add_all([b_text, b_note])
+        await s.flush()
+        s.add(ProductMedia(
+            block_id=b_note.id, media_type="video_note", storage_path="/tmp/none",
+            mime_type="video/mp4", file_size=10, telegram_file_id="fid", order_idx=0,
+        ))
+        await s.commit()
+
+    bot = MagicMock()
+    bot.send_chat_action = AsyncMock()
+    bot.send_message = AsyncMock(return_value=MagicMock())
+    bot.send_video_note = AsyncMock(return_value=MagicMock(video_note=None))
+
+    n = await send_presentation(bot, 123, product)
+    assert n == 2
+    bot.send_message.assert_awaited()       # текстовый блок
+    bot.send_video_note.assert_awaited()    # кружок
+
+
+@pytest.mark.asyncio
+async def test_presentation_disabled_sends_nothing(make_committed, clean_db):
+    product = await make_committed.product(presentation_enabled=False)
+    bot = MagicMock()
+    bot.send_chat_action = AsyncMock()
+    n = await send_presentation(bot, 1, product)
+    assert n == 0
+    bot.send_chat_action.assert_not_called()
