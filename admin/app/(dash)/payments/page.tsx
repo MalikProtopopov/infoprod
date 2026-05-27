@@ -60,6 +60,7 @@ export default function PaymentsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [receiptsFor, setReceiptsFor] = useState<Payment | null>(null);
+  const [newReceipts, setNewReceipts] = useState<File[]>([]); // чеки, выбранные при создании
 
   const selectedProduct = useMemo(
     () => (products || []).find((p) => p.id === productId),
@@ -89,21 +90,33 @@ export default function PaymentsPage() {
 
   function openModal() {
     setPickedUser(null); setProductId(''); setPeriod(3);
-    setAmount(''); setComment(''); setError(null); setOpen(true);
+    setAmount(''); setComment(''); setError(null); setNewReceipts([]); setOpen(true);
   }
 
   async function save() {
     if (!pickedUser) return;
     setBusy(true); setError(null);
     try {
-      await api.post('/payments', {
+      const created = await api.post<{ id: number }>('/payments', {
         user_id: pickedUser.id,
         product_id: Number(productId),
         period_months: period,
         amount: amount || null,
         comment: comment || null,
       });
+      // Платёж создан — теперь подгружаем выбранные чеки (нужен payment_id).
+      let failed = 0;
+      for (const f of newReceipts.slice(0, MAX_RECEIPTS)) {
+        try {
+          const form = new FormData();
+          form.append('file', f);
+          await api.postForm(`/payments/${created.id}/receipts`, form);
+        } catch { failed += 1; }
+      }
       setOpen(false); mutate();
+      if (failed > 0) {
+        alert(`Платёж создан, но ${failed} чек(ов) не загрузились. Добавьте их через колонку «Чек».`);
+      }
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
   }
@@ -209,6 +222,43 @@ export default function PaymentsPage() {
           </Field>
           <Field label="Комментарий">
             <Input value={comment} onChange={(e) => setComment(e.target.value)} />
+          </Field>
+          <Field label="Чек (необязательно)" hint="До 3 файлов: jpg/png/webp/gif или PDF. Можно добавить и позже из колонки «Чек».">
+            {newReceipts.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-2">
+                {newReceipts.map((f, i) => (
+                  <span key={i} className="inline-flex items-center gap-1.5 bg-zinc-100 rounded-lg pl-2 pr-1 py-1 text-xs">
+                    <span className="max-w-[160px] truncate">{f.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => setNewReceipts((prev) => prev.filter((_, idx) => idx !== i))}
+                      className="size-4 inline-flex items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-200"
+                      aria-label="Убрать"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {newReceipts.length < MAX_RECEIPTS && (
+              <label className="inline-flex items-center gap-2 cursor-pointer">
+                <span className="inline-flex items-center justify-center h-9 px-4 rounded-xl glass-soft text-ink text-sm font-medium hover:bg-white/80 transition">
+                  + Прикрепить чек
+                </span>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    const picked = Array.from(e.target.files ?? []);
+                    setNewReceipts((prev) => [...prev, ...picked].slice(0, MAX_RECEIPTS));
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+            )}
           </Field>
           {error && (
             <div className="text-sm text-rose-600 bg-rose-50/80 border border-rose-200/60 rounded-xl px-3 py-2">
