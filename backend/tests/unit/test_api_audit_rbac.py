@@ -51,6 +51,27 @@ async def test_audit_log_records_payment_creation(
 
 
 @pytest.mark.asyncio
+async def test_audit_logs_lead_status_change(admin_client, make_committed, clean_db):
+    """Смена статуса заявки (раньше не логировалась) теперь пишется middleware'ом."""
+    lead = await make_committed.lead(status="new")
+    r = await admin_client.patch(f"/api/leads/{lead.id}", json={"status": "contacted"})
+    assert r.status_code == 200
+    audit = await admin_client.get("/api/audit-log?resource_type=lead&action=update")
+    items = audit.json()["items"]
+    assert any(it["resource_id"] == lead.id for it in items), "PATCH /leads должен попасть в аудит"
+
+
+@pytest.mark.asyncio
+async def test_audit_logs_product_delete(admin_client, make_committed, clean_db):
+    """Удаление продукта (раньше не логировалось) теперь в аудите."""
+    product = await make_committed.product()
+    r = await admin_client.delete(f"/api/products/{product.id}")
+    assert r.status_code in (200, 204)
+    audit = await admin_client.get("/api/audit-log?resource_type=product&action=delete")
+    assert any(it["resource_id"] == product.id for it in audit.json()["items"])
+
+
+@pytest.mark.asyncio
 async def test_audit_log_filter_by_admin(admin_client, make_committed, clean_db):
     """Фильтрация по admin_id."""
     # Просто проверим что фильтр не падает

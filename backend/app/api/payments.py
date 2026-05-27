@@ -222,14 +222,7 @@ async def create_payment(
     # Сохраняем чеки на диск + строки (в той же транзакции — атомарно с платежом).
     receipt_rows = _save_staged_receipts(session, payment.id, admin.id, staged)
 
-    # Audit
-    from app.services.audit import log_action
-    await log_action(
-        session, admin_id=admin.id, action="create",
-        resource_type="payment", resource_id=payment.id,
-        summary=f"Payment {payment.amount} {payment.currency} за {payment.period_months} мес. для user_id={payment.user_id}",
-        payload={"product_id": payment.product_id, "amount": str(payment.amount), "period_months": payment.period_months, "receipts": len(receipt_rows)},
-    )
+    # Аудит создания платежа пишет AuditMiddleware (POST /payments → payment/create).
 
     await session.commit()
     await session.refresh(payment)
@@ -413,16 +406,8 @@ async def upload_receipt(
         uploaded_by=admin.id,
     )
     session.add(rec)
-    await session.flush()
-
-    from app.services.audit import log_action
-    await log_action(
-        session, admin_id=admin.id, action="create",
-        resource_type="payment_receipt", resource_id=rec.id,
-        summary=f"Чек к платежу #{payment_id}",
-        payload={"payment_id": payment_id, "filename": file.filename, "size": len(content)},
-    )
     await session.commit()
+    # Аудит пишет AuditMiddleware (POST /payments/{id}/receipts).
 
     existing.append(rec)
     return [_receipt_out(r) for r in existing]

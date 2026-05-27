@@ -103,6 +103,24 @@ async def session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
 
 
 # ---------- API client ----------
+@pytest_asyncio.fixture(autouse=True)
+async def _bind_sessionlocal(engine: AsyncEngine):
+    """Привязывает app.db.session.SessionLocal к тестовому движку (NullPool).
+
+    Код, использующий SessionLocal напрямую (напр. AuditMiddleware), в тестах
+    должен ходить в тестовую БД, а не в глобальный пул (он ломается между
+    per-test event loop'ами — «Future attached to a different loop»).
+    """
+    import app.db.session as dbs
+
+    orig = dbs.SessionLocal
+    dbs.SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    try:
+        yield
+    finally:
+        dbs.SessionLocal = orig
+
+
 @pytest_asyncio.fixture
 async def api_client(engine: AsyncEngine):
     """httpx AsyncClient против FastAPI без реальной сети.
