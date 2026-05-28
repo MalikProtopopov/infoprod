@@ -46,10 +46,54 @@ async function requestForm<T>(path: string, form: FormData): Promise<T> {
   return data as T;
 }
 
+// Загрузка файла с прогрессом. fetch не отдаёт upload-прогресс, поэтому XHR.
+// onProgress(percent): 0..100 по факту отправки байт. После 100% сервер ещё
+// обрабатывает (напр. ffmpeg-квадрат для кружка) — это уже не upload, вызывающий
+// код показывает «Обработка…» пока промис не зарезолвится.
+function requestFormProgress<T>(
+  path: string,
+  form: FormData,
+  onProgress?: (percent: number) => void,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${API_BASE}${path}`);
+    xhr.withCredentials = true;
+    if (xhr.upload && onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+      };
+    }
+    xhr.onload = () => {
+      if (xhr.status === 401) {
+        if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+          window.location.href = '/login';
+        }
+        reject(new Error('Unauthorized'));
+        return;
+      }
+      const text = xhr.responseText;
+      let data: unknown = null;
+      try { data = text ? JSON.parse(text) : null; } catch { /* не-JSON ответ */ }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve((xhr.status === 204 ? undefined : data) as T);
+      } else {
+        const d = data as { detail?: unknown; message?: unknown } | null;
+        const detail = (d && (d.detail || d.message)) || xhr.statusText || `HTTP ${xhr.status}`;
+        reject(new Error(typeof detail === 'string' ? detail : JSON.stringify(detail)));
+      }
+    };
+    xhr.onerror = () => reject(new Error('Не удалось загрузить файл (сеть недоступна)'));
+    xhr.send(form);
+  });
+}
+
 export const api = {
   get: <T,>(p: string) => request<T>('GET', p),
   post: <T,>(p: string, b?: unknown) => request<T>('POST', p, b),
   postForm: <T,>(p: string, form: FormData) => requestForm<T>(p, form),
+  postFormProgress: <T,>(p: string, form: FormData, onProgress?: (percent: number) => void) =>
+    requestFormProgress<T>(p, form, onProgress),
   patch: <T,>(p: string, b?: unknown) => request<T>('PATCH', p, b),
   del: <T,>(p: string) => request<T>('DELETE', p),
 };

@@ -6,6 +6,7 @@ import clsx from 'clsx';
 
 import { api, fetcher } from '@/lib/api';
 import { useToast } from '@/components/Toast';
+import { UploadProgress } from '@/components/MediaThumb';
 
 /**
  * Панель медиа для одного шага воронки.
@@ -105,6 +106,7 @@ export function StepMediaPanel({ stepId }: { stepId: number }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [drag, setDrag] = useState(false);
   const [uploading, setUploading] = useState(0);
+  const [progress, setProgress] = useState<number | null>(null);
   const [dragId, setDragId] = useState<number | null>(null);
   const [dropTarget, setDropTarget] = useState<number | null>(null);
 
@@ -119,16 +121,18 @@ export function StepMediaPanel({ stepId }: { stepId: number }) {
         return;
       }
       setUploading((n) => n + 1);
+      setProgress(0);
       try {
         const form = new FormData();
         form.append('file', file);
-        await api.postForm<StepMedia>(`/funnel-steps/${stepId}/media`, form);
+        await api.postFormProgress<StepMedia>(`/funnel-steps/${stepId}/media`, form, setProgress);
         await mutate();
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Не удалось загрузить файл';
         showToast(msg, { type: 'error', durationMs: 5000 });
       } finally {
         setUploading((n) => n - 1);
+        setProgress(null);
       }
     },
     [stepId, list.length, mutate, showToast],
@@ -239,9 +243,12 @@ export function StepMediaPanel({ stepId }: { stepId: number }) {
         />
       </div>
 
-      {uploading > 0 && (
+      {progress !== null && (
+        <UploadProgress percent={progress} />
+      )}
+      {uploading > 1 && (
         <div className="text-xs text-zinc-500 text-center">
-          Загружаю {uploading}…
+          В очереди ещё {uploading - 1}…
         </div>
       )}
 

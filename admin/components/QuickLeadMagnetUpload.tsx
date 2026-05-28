@@ -1,9 +1,10 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '@/lib/api';
 import { Button, Field, Input, Sheet } from '@/components/ui';
+import { MediaThumb, UploadProgress } from '@/components/MediaThumb';
 
 type LeadMagnet = { id: number; name: string; file_type: string };
 
@@ -26,9 +27,13 @@ export function QuickLeadMagnetUpload({
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [drag, setDrag] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const previewUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
   function pickFile(f: File) {
     setFile(f);
@@ -46,12 +51,13 @@ export function QuickLeadMagnetUpload({
     if (!file || !name.trim()) return;
     setBusy(true);
     setError(null);
+    setProgress(0);
     try {
       const form = new FormData();
       form.append('file', file);
       form.append('name', name.trim());
       if (productId) form.append('product_id', String(productId));
-      const created = await api.postForm<LeadMagnet>('/lead-magnets', form);
+      const created = await api.postFormProgress<LeadMagnet>('/lead-magnets', form, setProgress);
       onUploaded(created);
       reset();
       onClose();
@@ -59,6 +65,7 @@ export function QuickLeadMagnetUpload({
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -94,10 +101,12 @@ export function QuickLeadMagnetUpload({
           }`}
         >
           {file ? (
-            <div>
-              <div className="text-2xl mb-1">📎</div>
-              <div className="text-sm font-medium">{file.name}</div>
-              <div className="text-xs text-zinc-500 mt-0.5">{formatSize(file.size)}</div>
+            <div className="flex items-center gap-3 text-left">
+              <MediaThumb url={previewUrl} mime={file.type} filename={file.name} size={56} />
+              <div className="min-w-0">
+                <div className="text-sm font-medium truncate" title={file.name}>{file.name}</div>
+                <div className="text-xs text-zinc-500 mt-0.5">{formatSize(file.size)} · нажмите, чтобы заменить</div>
+              </div>
             </div>
           ) : (
             <div>
@@ -113,6 +122,8 @@ export function QuickLeadMagnetUpload({
             onChange={(e) => { const f = e.target.files?.[0]; if (f) pickFile(f); }}
           />
         </div>
+
+        {progress !== null && <UploadProgress percent={progress} />}
 
         <Field label="Название" required>
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Чек-лист утреннего ухода" />

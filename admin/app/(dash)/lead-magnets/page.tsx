@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import useSWR from 'swr';
 
 import { api, fetcher } from '@/lib/api';
@@ -8,6 +8,7 @@ import {
   Button, Card, Empty, Field, Input, PageHeader, Pill, Select, Sheet,
   TableHead, TableWrap, Td, Textarea, Th, Tr,
 } from '@/components/ui';
+import { MediaThumb, UploadProgress } from '@/components/MediaThumb';
 
 type LeadMagnet = {
   id: number;
@@ -48,9 +49,13 @@ export default function LeadMagnetsPage() {
   const [description, setDescription] = useState('');
   const [productId, setProductId] = useState<number | ''>('');
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [drag, setDrag] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const previewUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
   function openSheet() {
     setError(null);
@@ -82,20 +87,20 @@ export default function LeadMagnetsPage() {
 
   async function upload() {
     if (!file || !name.trim()) return;
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setProgress(0);
     try {
       const form = new FormData();
       form.append('file', file);
       form.append('name', name.trim());
       if (description.trim()) form.append('description', description.trim());
       if (productId) form.append('product_id', String(productId));
-      await api.postForm<LeadMagnet>('/lead-magnets', form);
+      await api.postFormProgress<LeadMagnet>('/lead-magnets', form, setProgress);
       setOpen(false);
       reset();
       mutate();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setProgress(null); }
   }
 
   async function toggle(lm: LeadMagnet) {
@@ -209,10 +214,12 @@ export default function LeadMagnetsPage() {
             className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition ${drag ? 'border-indigo-500 bg-indigo-50/40' : 'border-zinc-300 hover:border-zinc-400'}`}
           >
             {file ? (
-              <div>
-                <div className="text-2xl mb-1">{TYPE_EMOJI[file.type.split('/')[0] === 'image' ? 'image' : file.type.split('/')[0] === 'video' ? 'video' : file.name.endsWith('.pdf') ? 'pdf' : 'document'] || '📎'}</div>
-                <div className="text-sm font-medium">{file.name}</div>
-                <div className="text-xs text-zinc-500 mt-0.5">{fmtSize(file.size)}</div>
+              <div className="flex items-center gap-3 text-left">
+                <MediaThumb url={previewUrl} mime={file.type} filename={file.name} size={56} />
+                <div className="min-w-0">
+                  <div className="text-sm font-medium truncate" title={file.name}>{file.name}</div>
+                  <div className="text-xs text-zinc-500 mt-0.5">{fmtSize(file.size)} · нажмите, чтобы заменить</div>
+                </div>
               </div>
             ) : (
               <div>
@@ -228,6 +235,8 @@ export default function LeadMagnetsPage() {
               onChange={(e) => { const f = e.target.files?.[0]; if (f) pickFile(f); }}
             />
           </div>
+
+          {progress !== null && <UploadProgress percent={progress} />}
 
           <Field label="Название" required>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Чек-лист утреннего ухода" />

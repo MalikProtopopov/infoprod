@@ -6,6 +6,7 @@ import useSWR from 'swr';
 import { api, fetcher } from '@/lib/api';
 import { Button, Empty, Field, Select } from '@/components/ui';
 import { RichTextEditor } from '@/components/RichTextEditor';
+import { MediaThumb, UploadProgress } from '@/components/MediaThumb';
 
 type Media = {
   id: number;
@@ -93,6 +94,7 @@ function BlockCard({
   const [text, setText] = useState(block.text ?? '');
   const [delay, setDelay] = useState(block.delay_ms);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
   const [uploadErr, setUploadErr] = useState<string | null>(null);
   const dirty = text !== (block.text ?? '') || delay !== block.delay_ms;
   const mediaLimit = block.kind === 'media' ? 10 : 1;
@@ -107,13 +109,13 @@ function BlockCard({
     await api.del(`/content-blocks/${block.id}`); await onChanged();
   }
   async function upload(file: File) {
-    setBusy(true); setUploadErr(null);
+    setBusy(true); setUploadErr(null); setProgress(0);
     try {
       const form = new FormData(); form.append('file', file);
-      await api.postForm(`/content-blocks/${block.id}/media`, form);
+      await api.postFormProgress(`/content-blocks/${block.id}/media`, form, setProgress);
       await onChanged();
     } catch (e) { setUploadErr(e instanceof Error ? e.message : String(e)); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setProgress(null); }
   }
   async function removeMedia(mid: number) {
     await api.del(`/content-block-media/${mid}`); await onChanged();
@@ -139,24 +141,28 @@ function BlockCard({
           <div className="flex flex-wrap gap-2 mb-2">
             {block.media.map((m) => (
               <div key={m.id} className="relative">
-                {m.is_image ? (
-                  <img src={mediaUrl(m.id)} alt="" className="size-16 rounded-lg object-cover border border-zinc-200" />
-                ) : (
-                  <a href={mediaUrl(m.id)} target="_blank" rel="noreferrer" className="flex size-16 items-center justify-center rounded-lg border border-zinc-200 bg-zinc-50 text-[10px] text-center px-1">
-                    {m.media_type}
-                  </a>
-                )}
+                <a href={mediaUrl(m.id)} target="_blank" rel="noreferrer" title={m.original_filename || m.media_type}>
+                  <MediaThumb
+                    url={mediaUrl(m.id)}
+                    type={m.media_type}
+                    filename={m.original_filename}
+                    size={64}
+                    rounded={block.kind === 'video_note' ? 'full' : 'lg'}
+                    className="border border-zinc-200"
+                  />
+                </a>
                 <button type="button" onClick={() => removeMedia(m.id)} className="absolute -top-1.5 -right-1.5 size-5 rounded-full bg-rose-500 text-white text-xs">×</button>
               </div>
             ))}
           </div>
           {block.media.length < mediaLimit && (
             <label className="inline-flex items-center gap-2 cursor-pointer">
-              <span className="inline-flex items-center justify-center h-8 px-3 rounded-lg glass-soft text-sm hover:bg-white/80">+ Загрузить файл</span>
+              <span className={`inline-flex items-center justify-center h-8 px-3 rounded-lg glass-soft text-sm hover:bg-white/80 ${busy ? 'opacity-50 pointer-events-none' : ''}`}>+ Загрузить файл</span>
               <input type="file" accept={ACCEPT[block.kind]} className="hidden" disabled={busy}
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); e.target.value = ''; }} />
             </label>
           )}
+          {progress !== null && <UploadProgress percent={progress} className="mt-2 max-w-xs" />}
           {block.kind === 'video_note' && (
             <p className="text-xs text-zinc-500 mt-1">Кружок: загрузите любое видео — оно автоматически обрежется до квадрата и ≤ 60 сек. Без подписи: текст добавьте отдельным текстовым блоком.</p>
           )}

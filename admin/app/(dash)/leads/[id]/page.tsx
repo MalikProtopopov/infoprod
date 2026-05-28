@@ -1,11 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { use, useMemo, useState } from 'react';
+import { use, useEffect, useMemo, useState } from 'react';
 import useSWR from 'swr';
 
 import { api, fetcher } from '@/lib/api';
 import { Button, Card, Field, Input, PageHeader, Pill, Select, Sheet } from '@/components/ui';
+import { MediaThumb, UploadProgress } from '@/components/MediaThumb';
 
 type LeadDetail = {
   id: number;
@@ -209,7 +210,11 @@ function PaymentModal({
   const [amount, setAmount] = useState('');
   const [receipt, setReceipt] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const receiptPreview = useMemo(() => (receipt ? URL.createObjectURL(receipt) : null), [receipt]);
+  useEffect(() => () => { if (receiptPreview) URL.revokeObjectURL(receiptPreview); }, [receiptPreview]);
 
   // если платежей нет — сразу режим создания
   const effMode = has ? mode : 'create';
@@ -230,14 +235,15 @@ function PaymentModal({
         form.append('period_months', String(period));
         if (amount.trim()) form.append('amount', amount.trim());
         form.append('receipts', receipt);
-        const created = await api.postForm<Payment>('/payments', form);
+        setProgress(0);
+        const created = await api.postFormProgress<Payment>('/payments', form, setProgress);
         paymentId = created.id;
       }
       await api.patch(`/leads/${lead.id}`, { status: targetStatus, payment_id: paymentId });
       await onDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setProgress(null); }
   }
 
   return (
@@ -292,7 +298,8 @@ function PaymentModal({
             </Field>
             <Field label="Чек" hint="Обязательно — подтверждение оплаты" required>
               {receipt ? (
-                <div className="flex items-center gap-2 text-sm bg-zinc-100 rounded-lg pl-2 pr-1 py-1 w-fit">
+                <div className="flex items-center gap-2 text-sm bg-zinc-100 rounded-lg p-1.5 w-fit">
+                  <MediaThumb url={receiptPreview} mime={receipt.type} filename={receipt.name} size={40} />
                   <span className="max-w-[200px] truncate">{receipt.name}</span>
                   <button type="button" onClick={() => setReceipt(null)} className="size-4 inline-flex items-center justify-center rounded-full text-zinc-500 hover:bg-zinc-200" aria-label="Убрать">×</button>
                 </div>
@@ -311,6 +318,7 @@ function PaymentModal({
           </>
         )}
 
+        {progress !== null && <UploadProgress percent={progress} />}
         {error && (
           <div className="text-sm text-rose-600 bg-rose-50/80 border border-rose-200/60 rounded-xl px-3 py-2">{error}</div>
         )}

@@ -9,6 +9,7 @@ import {
   TableHead, TableWrap, Td, Th, Tr,
 } from '@/components/ui';
 import { UserPicker, type PickedUser } from '@/components/UserPicker';
+import { UploadProgress } from '@/components/MediaThumb';
 
 type Receipt = {
   id: number;
@@ -58,6 +59,7 @@ export default function PaymentsPage() {
   const [amount, setAmount] = useState<string>('');
   const [comment, setComment] = useState<string>('');
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [receiptsFor, setReceiptsFor] = useState<Payment | null>(null);
   const [newReceipts, setNewReceipts] = useState<File[]>([]); // чеки, выбранные при создании
@@ -95,7 +97,7 @@ export default function PaymentsPage() {
 
   async function save() {
     if (!pickedUser || newReceipts.length === 0) return;
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setProgress(0);
     try {
       // Чек обязателен и создаётся атомарно с платежом — один multipart-запрос.
       const form = new FormData();
@@ -105,10 +107,10 @@ export default function PaymentsPage() {
       if (amount) form.append('amount', amount);
       if (comment) form.append('comment', comment);
       for (const f of newReceipts.slice(0, MAX_RECEIPTS)) form.append('receipts', f);
-      await api.postForm('/payments', form);
+      await api.postFormProgress('/payments', form, setProgress);
       setOpen(false); mutate();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setProgress(null); }
   }
 
   async function remove(p: Payment) {
@@ -253,6 +255,7 @@ export default function PaymentsPage() {
               </label>
             )}
           </Field>
+          {progress !== null && <UploadProgress percent={progress} />}
           {error && (
             <div className="text-sm text-rose-600 bg-rose-50/80 border border-rose-200/60 rounded-xl px-3 py-2">
               {error}
@@ -315,18 +318,19 @@ function ReceiptsSheet({
   const receipts = payment.receipts ?? [];
   const images = receipts.filter((r) => r.is_image);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<number | null>(null);
 
   async function upload(file: File) {
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setProgress(0);
     try {
       const form = new FormData();
       form.append('file', file);
-      await api.postForm(`/payments/${payment.id}/receipts`, form);
+      await api.postFormProgress(`/payments/${payment.id}/receipts`, form, setProgress);
       onChanged();
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setProgress(null); }
   }
 
   return (
@@ -377,6 +381,7 @@ function ReceiptsSheet({
             <p className="mt-1.5 text-xs text-zinc-500">
               Изображение (jpg/png/webp/gif) или PDF, до 10 МБ. Осталось слотов: {MAX_RECEIPTS - receipts.length}.
             </p>
+            {progress !== null && <UploadProgress percent={progress} className="mt-2 max-w-xs" />}
           </div>
         )}
 
