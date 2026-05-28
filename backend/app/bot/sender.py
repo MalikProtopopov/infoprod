@@ -84,8 +84,14 @@ async def send_media_item(
         if mt == "voice":
             return await bot.send_voice(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=reply_markup)
         if mt == "video_note":
-            # У кружка нет подписи; reply_markup допустим.
-            return await bot.send_video_note(chat_id, src, reply_markup=reply_markup)
+            # У кружка нет подписи; reply_markup допустим. length (диаметр) и
+            # duration помогают клиенту отрисовать круг сразу, до догрузки.
+            return await bot.send_video_note(
+                chat_id, src,
+                length=getattr(media, "width", None),
+                duration=getattr(media, "duration", None),
+                reply_markup=reply_markup,
+            )
         return await bot.send_document(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=reply_markup)
 
     try:

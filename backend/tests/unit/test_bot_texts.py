@@ -33,7 +33,8 @@ class TestProductCard:
 
     def test_all_zero_shows_fallback(self):
         out = product_card("X", "desc", 0, 0, 0, "RUB")
-        assert "Цена уточняется" in out
+        assert "индивидуально" in out
+        assert "Оставить заявку" in out
 
     def test_html_escape_in_name(self):
         out = product_card("<script>", None, 100, 0, 0, "RUB")

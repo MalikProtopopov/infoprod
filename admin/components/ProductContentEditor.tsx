@@ -158,7 +158,7 @@ function BlockCard({
             </label>
           )}
           {block.kind === 'video_note' && (
-            <p className="text-xs text-zinc-500 mt-1">Кружок: квадратное видео ≤ 60 сек, без подписи. Подпись добавьте текстовым блоком.</p>
+            <p className="text-xs text-zinc-500 mt-1">Кружок: загрузите любое видео — оно автоматически обрежется до квадрата и ≤ 60 сек. Без подписи: текст добавьте отдельным текстовым блоком.</p>
           )}
           {(block.kind === 'media' || block.kind === 'voice') && (
             <div className="mt-2">

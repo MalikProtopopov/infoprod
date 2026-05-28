@@ -175,12 +175,30 @@ async def upload_media(
     media_type = _resolve_media_type(block.kind, mime)
     ext = os.path.splitext(file.filename or "")[1] or mimetypes.guess_extension(mime) or ""
     dst = svc.save_media_to_disk(content, block_id, ext)
+    file_size = len(content)
+    width = height = duration = None
+
+    # Кружок обязан быть квадратным ≤60с — приводим к формату через ffmpeg.
+    # Если ffmpeg недоступен/упал — оставляем исходник (уже-квадратное видео
+    # отправится кружком и так).
+    if media_type == "video_note":
+        from app.services.video_note import process_to_square
+        result = await process_to_square(dst)
+        if result:
+            squared, width, height, duration = result
+            if str(squared) != str(dst):
+                try:
+                    os.remove(dst)
+                except OSError:
+                    pass
+            dst, mime = squared, "video/mp4"
+            file_size = os.path.getsize(dst)
 
     next_idx = max([m.order_idx for m in block.media], default=-1) + 1
     session.add(ProductMedia(
         block_id=block_id, media_type=media_type, storage_path=str(dst),
-        original_filename=file.filename, mime_type=mime, file_size=len(content),
-        order_idx=next_idx,
+        original_filename=file.filename, mime_type=mime, file_size=file_size,
+        width=width, height=height, duration=duration, order_idx=next_idx,
     ))
     await session.commit()
     # сбрасываем identity-map: иначе re-query вернёт объект со «старой» (пустой)
