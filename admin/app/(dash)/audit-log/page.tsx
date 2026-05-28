@@ -29,6 +29,8 @@ const ACTION_COLORS: Record<string, 'green' | 'amber' | 'red' | 'gray' | 'indigo
   delete: 'red',
   login: 'gray',
   logout: 'gray',
+  login_failed: 'amber',
+  password_change: 'indigo',
   gdpr_export: 'amber',
   gdpr_forget: 'red',
   feature_request: 'violet',
@@ -57,6 +59,7 @@ export default function AuditLogPage() {
             <Select value={resourceType} onChange={(e) => setResourceType(e.target.value)}>
               <option value="">— все —</option>
               <option value="product">Продукт</option>
+              <option value="content_block">Контент-блок</option>
               <option value="bot">Бот</option>
               <option value="channel">Канал</option>
               <option value="payment">Платёж</option>
@@ -74,7 +77,9 @@ export default function AuditLogPage() {
               <option value="update">update</option>
               <option value="delete">delete</option>
               <option value="login">login</option>
+              <option value="login_failed">login_failed</option>
               <option value="logout">logout</option>
+              <option value="password_change">password_change</option>
               <option value="gdpr_export">gdpr_export</option>
               <option value="gdpr_forget">gdpr_forget</option>
               <option value="feature_request">feature_request</option>

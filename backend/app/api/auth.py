@@ -19,8 +19,15 @@ from app.schemas.auth import (
     LoginResponse,
     PasswordChangeRequest,
 )
+from app.services.audit import log_action
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+def _client_ip(request: Request) -> str | None:
+    """IP клиента с учётом прокси (nginx проставляет X-Forwarded-For)."""
+    fwd = request.headers.get("x-forwarded-for", "")
+    return fwd.split(",")[0].strip() or (request.client.host if request.client else None)
 
 # Простой rate-limit логина: не более 10 попыток за 60 секунд с одного IP.
 _login_attempts: Dict[str, Deque[float]] = defaultdict(deque)
@@ -48,12 +55,22 @@ async def login(
     response: Response,
     session: AsyncSession = Depends(get_session),
 ) -> LoginResponse:
-    client_ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (request.client.host if request.client else "?")
+    client_ip = _client_ip(request) or "?"
+    user_agent = request.headers.get("user-agent")
     _check_login_rate_limit(client_ip)
     admin = (
         await session.execute(select(Admin).where(Admin.username == payload.username))
     ).scalar_one_or_none()
     if not admin or not verify_password(payload.password, admin.password_hash):
+        # Неуспешные попытки тоже важны для аудита (брутфорс/чужой доступ).
+        await log_action(
+            session, admin_id=admin.id if admin else None,
+            action="login_failed", resource_type="auth",
+            summary=f"Неудачный вход: {payload.username}",
+            method="POST", path="/api/auth/login",
+            ip=client_ip, user_agent=user_agent,
+        )
+        await session.commit()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Неверный логин или пароль")
 
     token = create_access_token(subject=admin.username)
@@ -66,12 +83,29 @@ async def login(
         secure=settings.cookie_secure,
         path="/",
     )
+    await log_action(
+        session, admin_id=admin.id, action="login", resource_type="auth",
+        resource_id=admin.id, method="POST", path="/api/auth/login",
+        ip=client_ip, user_agent=user_agent,
+    )
+    await session.commit()
     return LoginResponse(ok=True, username=admin.username)
 
 
 @router.post("/logout")
-async def logout(response: Response, _: Admin = Depends(current_admin)) -> dict:
+async def logout(
+    request: Request,
+    response: Response,
+    admin: Admin = Depends(current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
     response.delete_cookie(AUTH_COOKIE, path="/")
+    await log_action(
+        session, admin_id=admin.id, action="logout", resource_type="auth",
+        resource_id=admin.id, method="POST", path="/api/auth/logout",
+        ip=_client_ip(request), user_agent=request.headers.get("user-agent"),
+    )
+    await session.commit()
     return {"ok": True}
 
 

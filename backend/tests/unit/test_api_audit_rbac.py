@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import pytest
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from tests.helpers import payment_form
 
@@ -156,3 +158,97 @@ async def test_gdpr_export_records_audit(admin_client, make_committed, clean_db)
     audit = await admin_client.get("/api/audit-log?action=gdpr_export")
     body = audit.json()
     assert body["items"]
+
+
+# ───────── Аудит входов/выходов (раньше не логировались) ─────────
+
+
+@pytest.mark.asyncio
+async def test_login_success_records_audit(api_client, engine, clean_db):
+    from app.core.security import hash_password
+    from app.models.admin import Admin
+
+    async with async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)() as s:
+        s.add(Admin(username="loginuser", password_hash=hash_password("pw123456")))
+        await s.commit()
+
+    r = await api_client.post("/api/auth/login", json={"username": "loginuser", "password": "pw123456"})
+    assert r.status_code == 200
+
+    async with engine.connect() as conn:
+        row = (
+            await conn.execute(
+                text("SELECT action, resource_type FROM audit_log WHERE action='login' ORDER BY id DESC LIMIT 1")
+            )
+        ).first()
+    assert row is not None, "успешный логин должен попасть в audit_log"
+    assert row[0] == "login" and row[1] == "auth"
+
+
+@pytest.mark.asyncio
+async def test_failed_login_records_audit(api_client, engine, clean_db):
+    from app.core.security import hash_password
+    from app.models.admin import Admin
+
+    async with async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)() as s:
+        s.add(Admin(username="loginuser", password_hash=hash_password("rightpass")))
+        await s.commit()
+
+    r = await api_client.post("/api/auth/login", json={"username": "loginuser", "password": "WRONG"})
+    assert r.status_code == 401
+
+    async with engine.connect() as conn:
+        cnt = (
+            await conn.execute(text("SELECT count(*) FROM audit_log WHERE action='login_failed'"))
+        ).scalar()
+    assert cnt >= 1, "неуспешный вход должен фиксироваться как login_failed"
+
+
+@pytest.mark.asyncio
+async def test_logout_records_audit(admin_client, engine, clean_db):
+    r = await admin_client.post("/api/auth/logout")
+    assert r.status_code == 200
+
+    async with engine.connect() as conn:
+        cnt = (
+            await conn.execute(text("SELECT count(*) FROM audit_log WHERE action='logout'"))
+        ).scalar()
+    assert cnt >= 1
+
+
+@pytest.mark.asyncio
+async def test_nested_content_block_audited_as_content_block(admin_client, make_committed, clean_db):
+    """POST /products/{id}/content-blocks должен логироваться как content_block, не product."""
+    product = await make_committed.product()
+    r = await admin_client.post(
+        f"/api/products/{product.id}/content-blocks", json={"kind": "text", "text": "hi"}
+    )
+    assert r.status_code == 201
+    audit = await admin_client.get("/api/audit-log?resource_type=content_block&action=create")
+    assert audit.json()["items"], "вложенный content-block должен попасть под resource_type=content_block"
+
+
+@pytest.mark.asyncio
+async def test_audit_total_reflects_full_count_not_page(admin_client, make_committed, clean_db):
+    """total — общее число записей под фильтром, а не размер страницы."""
+    l1 = await make_committed.lead(status="new")
+    l2 = await make_committed.lead(status="new")
+    await admin_client.patch(f"/api/leads/{l1.id}", json={"status": "contacted"})
+    await admin_client.patch(f"/api/leads/{l2.id}", json={"status": "contacted"})
+
+    r = await admin_client.get("/api/audit-log?resource_type=lead&action=update&limit=1")
+    body = r.json()
+    assert len(body["items"]) == 1, "страница ограничена limit=1"
+    assert body["total"] >= 2, "total должен считать все записи, а не только страницу"
+
+
+@pytest.mark.asyncio
+async def test_password_change_audited_as_password_change(admin_client, clean_db):
+    """POST /admin/password логируется как action=password_change (не «password»)."""
+    r = await admin_client.post(
+        "/api/admin/password",
+        json={"old_password": "testpass", "new_password": "newPassword123"},
+    )
+    assert r.status_code == 200
+    audit = await admin_client.get("/api/audit-log?action=password_change")
+    assert audit.json()["items"], "смена пароля должна логироваться как password_change"

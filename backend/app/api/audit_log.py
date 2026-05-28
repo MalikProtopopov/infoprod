@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import current_admin, get_session, require_role
@@ -24,16 +24,26 @@ async def list_audit_log(
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
-    stmt = select(AuditLog).order_by(AuditLog.id.desc())
+    conds = []
     if admin_id is not None:
-        stmt = stmt.where(AuditLog.admin_id == admin_id)
+        conds.append(AuditLog.admin_id == admin_id)
     if resource_type:
-        stmt = stmt.where(AuditLog.resource_type == resource_type)
+        conds.append(AuditLog.resource_type == resource_type)
     if action:
-        stmt = stmt.where(AuditLog.action == action)
-    rows = (await session.execute(stmt.limit(limit).offset(offset))).scalars().all()
+        conds.append(AuditLog.action == action)
+
+    # total — общее число записей под фильтром (не размер страницы), чтобы
+    # фронт мог показать счётчик и пагинацию.
+    total = (
+        await session.execute(select(func.count()).select_from(AuditLog).where(*conds))
+    ).scalar_one()
+    rows = (
+        await session.execute(
+            select(AuditLog).where(*conds).order_by(AuditLog.id.desc()).limit(limit).offset(offset)
+        )
+    ).scalars().all()
     return {
-        "total": len(rows),
+        "total": total,
         "items": [
             {
                 "id": r.id,
