@@ -165,6 +165,7 @@ export default function ProductsPage() {
                     <Td>{p.is_active ? <Pill color="green">да</Pill> : <Pill color="gray">нет</Pill>}</Td>
                     <Td className="text-right">
                       <div className="inline-flex gap-2">
+                        <Button size="sm" variant="ghost" onClick={() => setContentFor(p)}>🎬 Блоки</Button>
                         <Link href={`/products/${p.id}`}>
                           <Button size="sm" variant="ghost">Ссылки</Button>
                         </Link>
