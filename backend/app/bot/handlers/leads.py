@@ -57,7 +57,11 @@ async def cb_lead(cb: CallbackQuery) -> None:
     if not is_enabled("leads"):
         await cb.answer("Недоступно", show_alert=True)
         return
-    product_id = int(cb.data.split(":", 1)[1])
+    try:
+        product_id = int(cb.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await cb.answer("Кнопка не настроена", show_alert=True)
+        return
     async with SessionLocal() as session:
         user, _ = await _upsert_user(session, cb)
         product = (

@@ -91,16 +91,20 @@ function defaultsForKind(kind: BtnKind, currentText: string, stepId?: number): B
       };
     case 'url':
       return { text: currentText || 'Открыть', url: '', callback_data: undefined };
+    // Для lead/product/funnel/quiz/form подставляем «голый» префикс
+    // callback_data, чтобы detectKind узнавал тип ДО выбора цели — иначе при
+    // пустом callback_data выпадашка отскакивала обратно на «Открыть ссылку».
+    // Конкретный id допишется, когда пользователь выберет продукт/воронку/шаг.
     case 'lead':
-      return { text: currentText || 'Оставить заявку', callback_data: '', url: undefined };
+      return { text: currentText || 'Оставить заявку', callback_data: 'lead:', url: undefined };
     case 'product':
-      return { text: currentText || 'Посмотреть тарифы', callback_data: '', url: undefined };
+      return { text: currentText || 'Посмотреть тарифы', callback_data: 'prod:', url: undefined };
     case 'funnel':
-      return { text: currentText || 'Узнать подробнее', callback_data: '', url: undefined };
+      return { text: currentText || 'Узнать подробнее', callback_data: 'funnel:start:', url: undefined };
     case 'quiz':
-      return { text: currentText || 'начать тест →', callback_data: '', url: undefined };
+      return { text: currentText || 'начать тест →', callback_data: 'quiz:start:', url: undefined };
     case 'form':
-      return { text: currentText || 'оставить заявку →', callback_data: '', url: undefined };
+      return { text: currentText || 'оставить заявку →', callback_data: 'form:start:', url: undefined };
     case 'menu':
       return { text: currentText || 'Главное меню', callback_data: 'menu:main', url: undefined };
   }

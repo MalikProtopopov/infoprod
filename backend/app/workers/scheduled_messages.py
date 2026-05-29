@@ -59,6 +59,10 @@ def _build_keyboard(step_buttons: Any | None, include_unsubscribe: bool = True):
                 if not url and not cb:
                     # Пустая «текстовая» кнопка — Telegram её не примет.
                     continue
+                if not url and cb.endswith(":"):
+                    # Недонастроенная кнопка (тип выбран, цель — нет): пропускаем,
+                    # чтобы не отрисовывать «мёртвую» кнопку и не падать при клике.
+                    continue
                 cleaned.append(InlineKeyboardButton(
                     text=text_btn,
                     url=url or None,
