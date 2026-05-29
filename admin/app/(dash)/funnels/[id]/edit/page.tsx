@@ -23,6 +23,7 @@ import { EntryPointsSection } from '@/components/EntryPointsSection';
 import { ObservableTestPanel } from '@/components/ObservableTestPanel';
 import { ActiveFunnelWarning, ActiveFunnelConfirm } from '@/components/SafetyWarning';
 import { AbTestPlaceholder } from '@/components/AbTestPlaceholder';
+import { useToast } from '@/components/Toast';
 
 type LeadMagnet = { id: number; name: string; file_type: string; file_size: number | null };
 type Bot = { id: number; username: string };
@@ -631,16 +632,22 @@ function StepEditor({
   onMutate: () => void;
   onMutateMagnets: () => void;
 }) {
+  const { showToast } = useToast();
   const [local, setLocal] = useState<Step>(step);
+  // Базовый «сохранённый» снимок шага. Сравниваем `local` именно с ним, а не с
+  // приходящим из SWR `step`: сервер нормализует часть полей (например пустой
+  // parse_mode → 'HTML'), из-за чего сравнение с `step` навсегда оставалось бы
+  // «несохранено». Снимок обновляем при переключении шага и после успешного сохранения.
+  const [saved, setSaved] = useState<Step>(step);
   const [saving, setSaving] = useState(false);
   const [magnetUploadOpen, setMagnetUploadOpen] = useState(false);
   const [confirmActive, setConfirmActive] = useState(false);
   const isActive = funnel.is_active && funnel.active_entries > 0;
   const human = delayToHuman(local.delay_minutes);
 
-  useEffect(() => { setLocal(step); }, [step.id]);
+  useEffect(() => { setLocal(step); setSaved(step); }, [step.id]);
 
-  const dirty = JSON.stringify(local) !== JSON.stringify(step);
+  const dirty = JSON.stringify(local) !== JSON.stringify(saved);
 
   async function persist() {
     if (isActive && dirty) { setConfirmActive(true); return; }
@@ -662,10 +669,14 @@ function StepEditor({
         quiz_id: local.quiz_id,
         form_id: local.form_id,
       });
+      // Фиксируем текущее состояние как «сохранённое» → индикатор «несохранено»
+      // сбрасывается сразу, не дожидаясь и не завися от ответа refetch.
+      setSaved(local);
       onMutate();
       setConfirmActive(false);
+      showToast('Шаг сохранён', { type: 'success' });
     } catch (e) {
-      alert(e instanceof Error ? e.message : String(e));
+      showToast(e instanceof Error ? e.message : String(e), { type: 'error' });
     } finally { setSaving(false); }
   }
 
