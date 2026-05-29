@@ -637,6 +637,7 @@ async def funnels_summary(
     session: AsyncSession = Depends(get_session),
     from_: datetime | None = Query(default=None, alias="from"),
     to: datetime | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
 ) -> dict:
     """Список всех воронок с базовыми метриками за период (для Pareto-блока)."""
     if to is None:
@@ -644,9 +645,10 @@ async def funnels_summary(
     if from_ is None:
         from_ = to - timedelta(days=30)
 
-    funnels = (
-        await session.execute(select(Funnel).order_by(Funnel.id.desc()))
-    ).scalars().all()
+    funnel_q = select(Funnel).order_by(Funnel.id.desc())
+    if bot_id is not None:
+        funnel_q = funnel_q.where(Funnel.bot_id == bot_id)
+    funnels = (await session.execute(funnel_q)).scalars().all()
     if not funnels:
         return {"from": from_.isoformat(), "to": to.isoformat(), "rows": []}
 

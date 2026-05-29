@@ -94,12 +94,15 @@ async def list_funnels(
     session: AsyncSession = Depends(get_session),
     product_id: int | None = Query(default=None),
     is_active: bool | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
 ) -> list[FunnelOut]:
     stmt = select(Funnel).order_by(Funnel.id.desc())
     if product_id is not None:
         stmt = stmt.where(Funnel.product_id == product_id)
     if is_active is not None:
         stmt = stmt.where(Funnel.is_active.is_(is_active))
+    if bot_id is not None:
+        stmt = stmt.where(Funnel.bot_id == bot_id)
     rows = (await session.execute(stmt)).scalars().all()
     if not rows:
         return []

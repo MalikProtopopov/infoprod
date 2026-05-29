@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import current_admin, get_session, require_role
 from app.models.admin import Admin
+from app.models.bot import Bot as BotModel
 from app.models.channel import Channel
+from app.models.message import Message
+from app.models.user_bot import UserBot
 from app.models.form import Form
 from app.models.funnel import Funnel
 from app.models.funnel_entry import FunnelEntry
@@ -23,15 +27,44 @@ from app.schemas.user import UserOut, UserUpdate
 router = APIRouter(prefix="/users", tags=["users"])
 
 
+async def _bots_by_user(session: AsyncSession, user_ids: list[int]) -> dict[int, list[dict]]:
+    """user_id → список ботов пользователя [{bot_id, username, is_blocked, last_seen_at}]."""
+    if not user_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(
+                UserBot.user_id, UserBot.bot_id, UserBot.is_blocked,
+                UserBot.last_seen_at, BotModel.username,
+            )
+            .join(BotModel, BotModel.id == UserBot.bot_id)
+            .where(UserBot.user_id.in_(user_ids))
+            .order_by(UserBot.last_seen_at.desc())
+        )
+    ).all()
+    out: dict[int, list[dict]] = {}
+    for uid, bid, blocked, last_seen, uname in rows:
+        out.setdefault(uid, []).append({
+            "bot_id": bid,
+            "username": uname,
+            "is_blocked": blocked,
+            "last_seen_at": last_seen,
+        })
+    return out
+
+
 @router.get("", response_model=dict)
 async def list_users(
     _: Admin = Depends(current_admin),
     session: AsyncSession = Depends(get_session),
     q: str | None = Query(default=None),
+    bot_id: int | None = Query(default=None, description="фильтр: только юзеры этого бота"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> dict:
     stmt = select(User)
+    if bot_id is not None:
+        stmt = stmt.where(User.id.in_(select(UserBot.user_id).where(UserBot.bot_id == bot_id)))
     if q:
         # Уберём ведущий @, лишние пробелы — пользователи часто копируют "@username"
         q_clean = q.strip().lstrip("@").strip()
@@ -53,9 +86,16 @@ async def list_users(
     rows = (
         await session.execute(stmt.order_by(User.id.desc()).limit(limit).offset(offset))
     ).scalars().all()
+    bots_map = await _bots_by_user(session, [u.id for u in rows])
     return {
         "total": total,
-        "items": [UserOut.model_validate(u, from_attributes=True) for u in rows],
+        "items": [
+            {
+                **UserOut.model_validate(u, from_attributes=True).model_dump(mode="json"),
+                "bots": bots_map.get(u.id, []),
+            }
+            for u in rows
+        ],
     }
 
 
@@ -99,8 +139,11 @@ async def get_user(
         )
     ).all()
 
+    bots_map = await _bots_by_user(session, [user.id])
+
     return {
         "user": UserOut.model_validate(user, from_attributes=True).model_dump(mode="json"),
+        "bots": bots_map.get(user.id, []),
         "leads": [
             {
                 "id": l.id,
@@ -159,6 +202,105 @@ async def update_user(
     await session.commit()
     await session.refresh(user)
     return UserOut.model_validate(user, from_attributes=True)
+
+
+# ───────── Чат: история сообщений + ручная отправка ─────────
+
+
+class SendMessageIn(BaseModel):
+    bot_id: int
+    text: str = Field(min_length=1, max_length=4000)
+
+
+@router.get("/{user_id}/messages")
+async def user_messages(
+    user_id: int,
+    _: Admin = Depends(current_admin),
+    session: AsyncSession = Depends(get_session),
+    bot_id: int | None = Query(default=None, description="фильтр по боту"),
+    limit: int = Query(default=200, ge=1, le=1000),
+) -> dict:
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    stmt = select(Message).where(Message.user_id == user_id)
+    if bot_id is not None:
+        stmt = stmt.where(Message.bot_id == bot_id)
+    # Берём последние N, возвращаем в хронологическом порядке (старые сверху).
+    rows = (
+        await session.execute(stmt.order_by(Message.id.desc()).limit(limit))
+    ).scalars().all()
+    items = [
+        {
+            "id": m.id,
+            "bot_id": m.bot_id,
+            "direction": m.direction,
+            "text": m.text,
+            "created_at": m.created_at,
+            "by_admin": m.sent_by_admin_id is not None,
+        }
+        for m in reversed(rows)
+    ]
+    return {"items": items}
+
+
+@router.post("/{user_id}/message")
+async def send_user_message(
+    user_id: int,
+    payload: SendMessageIn,
+    admin: Admin = Depends(current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Отправить пользователю сообщение через КОНКРЕТНОГО бота (мультибот).
+
+    Бот выбирается явно (bot_id). Если пользователь заблокировал бота —
+    ставим флаг и возвращаем понятную ошибку.
+    """
+    from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
+
+    from app.bot import manager as bot_manager
+    from app.services import messages as messages_svc
+    from app.services import user_bots
+
+    user = await session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    bot = await session.get(BotModel, payload.bot_id)
+    if bot is None:
+        raise HTTPException(status_code=404, detail="Бот не найден")
+
+    aio_bot = bot_manager.get_aiogram_bot(payload.bot_id)
+    if aio_bot is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Бот не запущен. Активируйте его в разделе «Боты».",
+        )
+
+    try:
+        sent = await aio_bot.send_message(
+            user.telegram_user_id, payload.text,
+            parse_mode="HTML", disable_web_page_preview=True,
+        )
+    except TelegramForbiddenError:
+        await user_bots.set_blocked(session, user_id=user_id, bot_id=payload.bot_id, blocked=True)
+        await session.commit()
+        raise HTTPException(
+            status_code=409,
+            detail="Пользователь заблокировал этого бота — сообщение не доставлено.",
+        )
+    except TelegramAPIError as e:
+        raise HTTPException(status_code=400, detail=f"Telegram отклонил отправку: {e}")
+
+    await messages_svc.log(
+        session, user_id=user_id, bot_id=payload.bot_id,
+        direction="out", text=payload.text,
+        tg_message_id=getattr(sent, "message_id", None),
+        sent_by_admin_id=admin.id,
+    )
+    # Раз сообщение ушло — бот точно не заблокирован: фиксируем контакт.
+    await user_bots.touch(session, user_id=user_id, bot_id=payload.bot_id)
+    await session.commit()
+    return {"ok": True, "tg_message_id": getattr(sent, "message_id", None)}
 
 
 # ───────── История ответов юзера (quiz/form submissions) ─────────

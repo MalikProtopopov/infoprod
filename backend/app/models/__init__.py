@@ -21,3 +21,5 @@ from app.models.audit_log import AuditLog  # noqa: F401
 from app.models.quiz import Quiz, QuizOption, QuizQuestion, QuizVerdict  # noqa: F401
 from app.models.form import Form, FormField  # noqa: F401
 from app.models.user_step_state import UserStepState  # noqa: F401
+from app.models.user_bot import UserBot  # noqa: F401
+from app.models.message import Message  # noqa: F401

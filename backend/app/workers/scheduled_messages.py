@@ -473,6 +473,14 @@ async def process_due_messages(
                     text, keyboard, parse_mode, session,
                 )
 
+            # Лог исходящего (чат) — если у воронки известен наш bot_id.
+            if bot_id is not None:
+                from app.services import messages as messages_svc
+                await messages_svc.log(
+                    session, user_id=user.id, bot_id=bot_id,
+                    direction="out", text=text,
+                )
+
             await _mark_sent(session, msg.id)
             stats["sent"] += 1
 
@@ -481,9 +489,24 @@ async def process_due_messages(
                 await funnels_svc.check_and_complete(entry.id)
 
         except Exception as e:  # noqa: BLE001
-            logger.exception("scheduled_message.failed", id=msg.id, error=str(e))
-            await _mark_failed(session, msg.id, str(e))
-            stats["failed"] += 1
+            err = str(e)
+            # Пользователь заблокировал бота — фиксируем флаг и останавливаем
+            # для него воронку (ретраить бессмысленно).
+            low = err.lower()
+            if ("forbidden" in low or "blocked by the user" in low) and bot_id is not None:
+                from app.services import user_bots
+                try:
+                    await user_bots.set_blocked(session, user_id=msg.user_id, bot_id=bot_id, blocked=True)
+                except Exception:  # noqa: BLE001
+                    pass
+                await _mark_cancelled(session, msg.id, "bot_blocked")
+                if entry is not None:
+                    await funnels_svc.cancel_entry(entry.id, reason="bot_blocked")
+                stats["cancelled"] += 1
+            else:
+                logger.exception("scheduled_message.failed", id=msg.id, error=err)
+                await _mark_failed(session, msg.id, err)
+                stats["failed"] += 1
 
     await session.commit()
     if any(stats.values()):

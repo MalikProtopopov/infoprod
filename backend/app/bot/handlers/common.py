@@ -54,12 +54,24 @@ def _nav_inline_kb() -> InlineKeyboardMarkup:
     )
 
 
+# Кеш telegram_bot_id → internal bots.id, чтобы не дёргать БД на каждый контакт.
+_BOT_ID_CACHE: dict[int, int] = {}
+
+
 async def _resolve_bot_id(session: AsyncSession, aiogram_bot: Bot) -> int | None:
-    """Берём internal id нашего бота по его telegram_bot_id."""
-    me = await aiogram_bot.get_me()
+    """Берём internal id нашего бота по его telegram_bot_id.
+
+    aiogram_bot.id извлекается из токена синхронно (без сетевого get_me),
+    поэтому вызов дешёвый; маппинг на наш bots.id кешируем."""
+    tg_id = aiogram_bot.id
+    cached = _BOT_ID_CACHE.get(tg_id)
+    if cached is not None:
+        return cached
     row = (
-        await session.execute(select(BotModel.id).where(BotModel.telegram_bot_id == me.id))
+        await session.execute(select(BotModel.id).where(BotModel.telegram_bot_id == tg_id))
     ).scalar_one_or_none()
+    if row is not None:
+        _BOT_ID_CACHE[tg_id] = row
     return row
 
 
@@ -73,6 +85,7 @@ async def _upsert_user(
     user = (
         await session.execute(select(User).where(User.telegram_user_id == tg_user.id))
     ).scalar_one_or_none()
+    is_new = user is None
     if user is None:
         user = User(
             telegram_user_id=tg_user.id,
@@ -83,13 +96,21 @@ async def _upsert_user(
         )
         session.add(user)
         await session.flush()
-        return user, True
-    user.username = tg_user.username
-    user.first_name = tg_user.first_name
-    user.last_name = tg_user.last_name
-    user.language_code = tg_user.language_code
-    user.last_seen_at = datetime.now(tz=timezone.utc)
-    return user, False
+    else:
+        user.username = tg_user.username
+        user.first_name = tg_user.first_name
+        user.last_name = tg_user.last_name
+        user.language_code = tg_user.language_code
+        user.last_seen_at = datetime.now(tz=timezone.utc)
+
+    # Фиксируем контакт с КОНКРЕТНЫМ ботом (мультибот). m.bot — текущий бот.
+    aiogram_bot = getattr(m, "bot", None)
+    if aiogram_bot is not None:
+        bot_id = await _resolve_bot_id(session, aiogram_bot)
+        if bot_id is not None:
+            from app.services import user_bots
+            await user_bots.touch(session, user_id=user.id, bot_id=bot_id)
+    return user, is_new
 
 
 async def _set_first_touch(

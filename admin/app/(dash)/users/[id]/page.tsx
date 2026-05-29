@@ -5,7 +5,10 @@ import useSWR from 'swr';
 
 import { api, fetcher } from '@/lib/api';
 import { useFeatures } from '@/lib/features';
-import { Button, Card, Empty, Field, Input, PageHeader, Pill, Skeleton, Textarea } from '@/components/ui';
+import { useToast } from '@/components/Toast';
+import { Button, Card, Empty, Field, Input, PageHeader, Pill, Select, Skeleton, Textarea } from '@/components/ui';
+
+type UserBotRow = { bot_id: number; username: string | null; is_blocked: boolean; last_seen_at: string };
 
 type UserCard = {
   user: {
@@ -20,6 +23,7 @@ type UserCard = {
     first_seen_at: string;
     last_seen_at: string;
   };
+  bots: UserBotRow[];
   leads: Array<{
     id: number;
     product_name: string;
@@ -92,6 +96,8 @@ export default function UserPage({ params }: { params: Promise<{ id: string }> }
           )
         }
       />
+
+      <ChatPanel userId={Number(id)} bots={data.bots ?? []} />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         <Card padded className="anim-rise">
@@ -229,6 +235,118 @@ export default function UserPage({ params }: { params: Promise<{ id: string }> }
 
       {(isOn('quizzes') || isOn('forms')) && <SubmissionsTimeline userId={Number(id)} />}
     </div>
+  );
+}
+
+
+type ChatMessage = {
+  id: number;
+  bot_id: number;
+  direction: 'in' | 'out';
+  text: string | null;
+  created_at: string;
+  by_admin: boolean;
+};
+
+function ChatPanel({ userId, bots }: { userId: number; bots: UserBotRow[] }) {
+  const { showToast } = useToast();
+  const [botId, setBotId] = useState<number | null>(
+    bots.find((b) => !b.is_blocked)?.bot_id ?? bots[0]?.bot_id ?? null,
+  );
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const key = botId != null ? `/users/${userId}/messages?bot_id=${botId}` : null;
+  const { data, mutate } = useSWR<{ items: ChatMessage[] }>(key, fetcher);
+  const selectedBot = bots.find((b) => b.bot_id === botId) || null;
+
+  if (bots.length === 0) {
+    return (
+      <Card padded className="anim-rise">
+        <h3 className="font-semibold mb-2">Чат</h3>
+        <Empty>Пользователь ещё не контактировал ни с одним ботом — писать некуда.</Empty>
+      </Card>
+    );
+  }
+
+  async function send() {
+    if (!text.trim() || botId == null) return;
+    setBusy(true);
+    try {
+      await api.post(`/users/${userId}/message`, { bot_id: botId, text: text.trim() });
+      setText('');
+      await mutate();
+      showToast('Сообщение отправлено');
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : 'Не удалось отправить', { type: 'error', durationMs: 5000 });
+      await mutate(); // блокировка могла обновиться
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const items = data?.items ?? [];
+
+  return (
+    <Card padded className="anim-rise space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h3 className="font-semibold">Чат с пользователем</h3>
+        <div className="w-56">
+          <Select value={botId ?? ''} onChange={(e) => setBotId(Number(e.target.value))}>
+            {bots.map((b) => (
+              <option key={b.bot_id} value={b.bot_id}>
+                {(b.username ? '@' + b.username : `бот #${b.bot_id}`) + (b.is_blocked ? ' 🚫' : '')}
+              </option>
+            ))}
+          </Select>
+        </div>
+      </div>
+
+      {selectedBot?.is_blocked && (
+        <div className="text-xs text-rose-600 bg-rose-50/80 border border-rose-200/60 rounded-xl px-3 py-2">
+          🚫 Пользователь заблокировал этого бота — сообщения не дойдут. Попробуйте другого бота, если есть.
+        </div>
+      )}
+
+      <div className="rounded-xl bg-zinc-50/70 border border-zinc-200/60 p-3 max-h-[360px] overflow-y-auto space-y-2">
+        {items.length === 0 ? (
+          <div className="text-sm text-zinc-400 text-center py-6">Сообщений пока нет</div>
+        ) : (
+          items.map((m) => (
+            <div key={m.id} className={'flex ' + (m.direction === 'out' ? 'justify-end' : 'justify-start')}>
+              <div
+                className={
+                  'max-w-[75%] rounded-2xl px-3 py-2 text-sm whitespace-pre-wrap break-words ' +
+                  (m.direction === 'out'
+                    ? 'bg-indigo-600 text-white rounded-br-sm'
+                    : 'bg-white border border-zinc-200 text-ink rounded-bl-sm')
+                }
+              >
+                {m.direction === 'out'
+                  ? <div dangerouslySetInnerHTML={{ __html: m.text || '' }} />
+                  : <div>{m.text}</div>}
+                <div className={'mt-1 text-[10px] ' + (m.direction === 'out' ? 'text-indigo-200' : 'text-zinc-400')}>
+                  {m.direction === 'out' ? (m.by_admin ? 'вы · ' : 'бот · ') : ''}
+                  {new Date(m.created_at).toLocaleString('ru-RU')}
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="flex gap-2 items-end">
+        <Textarea
+          rows={2}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="Сообщение пользователю (HTML: b/i/u, ссылки)…"
+          className="flex-1"
+        />
+        <Button onClick={send} disabled={busy || !text.trim()}>
+          {busy ? '…' : 'Отправить'}
+        </Button>
+      </div>
+    </Card>
   );
 }
 

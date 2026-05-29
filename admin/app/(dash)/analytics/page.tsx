@@ -107,8 +107,10 @@ export default function AnalyticsPage() {
   const [attribution, setAttribution] = useState<Attribution>('last');
   const [metric, setMetric] = useState<Metric>('leads');
   const [granularity, setGranularity] = useState<Granularity>('day');
+  const [botId, setBotId] = useState<number | ''>('');
 
   const { data: products } = useSWR<Product[]>('/products', fetcher);
+  const { data: bots } = useSWR<{ id: number; username: string | null }[]>('/bots', fetcher);
   const { data: health } = useSWR<HealthResp>('/stats/health', fetcher, {
     refreshInterval: 120_000,
     revalidateOnFocus: false,
@@ -130,8 +132,8 @@ export default function AnalyticsPage() {
 
   const funnelsSummaryKey = useMemo(() => {
     const { from, to } = periodRange(period);
-    return `/stats/funnels/summary?from=${from}&to=${to}`;
-  }, [period]);
+    return `/stats/funnels/summary?from=${from}&to=${to}${botId ? `&bot_id=${botId}` : ''}`;
+  }, [period, botId]);
   const { data: funnelsSummary } = useSWR<FunnelsSummaryResp>(funnelsSummaryKey, fetcher, {
     revalidateOnFocus: false,
     dedupingInterval: 60_000,
@@ -208,6 +210,18 @@ export default function AnalyticsPage() {
             </button>
           ))}
         </div>
+
+        <Select
+          value={botId}
+          onChange={(e) => setBotId(e.target.value ? Number(e.target.value) : '')}
+          className="!w-auto"
+          title="Фильтр сводки по воронкам по боту"
+        >
+          <option value="">Все боты</option>
+          {(bots || []).map((b) => (
+            <option key={b.id} value={b.id}>{b.username ? '@' + b.username : `бот #${b.id}`}</option>
+          ))}
+        </Select>
 
         <Select
           value={productId}

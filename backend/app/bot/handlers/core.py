@@ -244,11 +244,18 @@ async def on_text_message(m: Message, bot: Bot) -> None:
 
     async with SessionLocal() as session:
         user, is_new = await _upsert_user(session, m)
+        our_bot_id = await _resolve_bot_id(session, bot)
         if is_new:
-            our_bot_id = await _resolve_bot_id(session, bot)
             await _set_first_touch(
                 session, user_id=user.id, bot_id=our_bot_id,
                 product_id=None, tracking_link=None,
+            )
+        # Лог входящего сообщения (чат в админке)
+        if our_bot_id is not None:
+            from app.services import messages as messages_svc
+            await messages_svc.log(
+                session, user_id=user.id, bot_id=our_bot_id,
+                direction="in", text=text,
             )
 
         # 1) Активная форма у юзера? Тогда трактуем текст как ответ.
