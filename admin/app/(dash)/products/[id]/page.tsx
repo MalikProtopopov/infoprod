@@ -17,7 +17,7 @@ type Product = {
   name: string;
   description: string | null;
   cover_url: string | null;
-  channel_id: number;
+  channel_id: number | null;
   channel_title: string | null;
   price_3m: string;
   price_6m: string;
@@ -147,7 +147,7 @@ export default function ProductDetailPage({ params }: { params: Promise<{ id: st
     <div>
       <PageHeader
         title={product.name}
-        subtitle={`Код: ${product.code} · Канал: ${product.channel_title}`}
+        subtitle={`Код: ${product.code} · Канал: ${product.channel_title ?? 'без канала'}`}
         action={
           <Link href="/products"><Button variant="ghost">← К списку</Button></Link>
         }

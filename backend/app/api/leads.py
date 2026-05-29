@@ -28,7 +28,7 @@ CANCEL_REASON_PRESETS = [
 
 
 def _to_out(
-    lead: Lead, user: User, product: Product, channel: Channel, payment: Payment | None = None
+    lead: Lead, user: User, product: Product, channel: Channel | None, payment: Payment | None = None
 ) -> LeadOut:
     return LeadOut(
         id=lead.id,
@@ -51,8 +51,8 @@ def _to_out(
         product_price_3m=product.price_3m,
         product_price_6m=product.price_6m,
         product_price_12m=product.price_12m,
-        channel_id=channel.id,
-        channel_title=channel.title,
+        channel_id=channel.id if channel else None,
+        channel_title=channel.title if channel else None,
         payment_id=lead.payment_id,
         payment_amount=payment.amount if payment else None,
         payment_currency=payment.currency if payment else None,
@@ -73,7 +73,7 @@ async def list_leads(
         select(Lead, User, Product, Channel, Payment)
         .join(User, User.id == Lead.user_id)
         .join(Product, Product.id == Lead.product_id)
-        .join(Channel, Channel.id == Product.channel_id)
+        .outerjoin(Channel, Channel.id == Product.channel_id)
         .outerjoin(Payment, Payment.id == Lead.payment_id)
         .order_by(Lead.id.desc())
     )
@@ -121,7 +121,7 @@ async def get_lead(
             select(Lead, User, Product, Channel, Payment)
             .join(User, User.id == Lead.user_id)
             .join(Product, Product.id == Lead.product_id)
-            .join(Channel, Channel.id == Product.channel_id)
+            .outerjoin(Channel, Channel.id == Product.channel_id)
             .outerjoin(Payment, Payment.id == Lead.payment_id)
             .where(Lead.id == lead_id)
         )
@@ -197,7 +197,11 @@ async def update_lead(
 
     user = (await session.execute(select(User).where(User.id == lead.user_id))).scalar_one()
     product = (await session.execute(select(Product).where(Product.id == lead.product_id))).scalar_one()
-    channel = (await session.execute(select(Channel).where(Channel.id == product.channel_id))).scalar_one()
+    channel = None
+    if product.channel_id is not None:
+        channel = (
+            await session.execute(select(Channel).where(Channel.id == product.channel_id))
+        ).scalar_one_or_none()
     payment = None
     if lead.payment_id is not None:
         payment = (

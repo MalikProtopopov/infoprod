@@ -11,7 +11,7 @@ class ProductCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: str | None = None
     cover_url: str | None = None
-    channel_id: int
+    channel_id: int | None = None
     price_3m: Decimal = Field(ge=0)
     price_6m: Decimal = Field(ge=0)
     price_12m: Decimal = Field(ge=0)
@@ -42,7 +42,7 @@ class ProductOut(BaseModel):
     name: str
     description: str | None
     cover_url: str | None
-    channel_id: int
+    channel_id: int | None = None
     channel_title: str | None = None
     price_3m: Decimal
     price_6m: Decimal

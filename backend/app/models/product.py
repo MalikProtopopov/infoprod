@@ -21,7 +21,11 @@ class Product(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     cover_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
-    channel_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("channels.id", ondelete="RESTRICT"), nullable=False)
+    # Канал необязателен: продукты-«лид-магниты» (бесплатная консультация/бриф)
+    # собирают заявки без выдачи доступа в Telegram-канал.
+    channel_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("channels.id", ondelete="RESTRICT"), nullable=True
+    )
     price_3m: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     price_6m: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     price_12m: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
@@ -43,4 +47,4 @@ class Product(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    channel: Mapped["Channel"] = relationship(back_populates="products")
+    channel: Mapped["Channel | None"] = relationship(back_populates="products")

@@ -45,9 +45,9 @@ class LeadOut(BaseModel):
     product_price_3m: Decimal
     product_price_6m: Decimal
     product_price_12m: Decimal
-    # канал, к которому ведёт продукт
-    channel_id: int
-    channel_title: str
+    # канал, к которому ведёт продукт (может отсутствовать у продуктов-лид-магнитов)
+    channel_id: int | None = None
+    channel_title: str | None = None
     # --- сделка / отмена ---
     payment_id: int | None = None
     payment_amount: Decimal | None = None

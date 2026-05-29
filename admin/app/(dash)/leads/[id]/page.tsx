@@ -29,8 +29,8 @@ type LeadDetail = {
   product_price_3m: string;
   product_price_6m: string;
   product_price_12m: string;
-  channel_id: number;
-  channel_title: string;
+  channel_id: number | null;
+  channel_title: string | null;
   payment_id: number | null;
   payment_amount: string | null;
   payment_currency: string | null;
@@ -115,7 +115,7 @@ export default function LeadPage({ params }: { params: Promise<{ id: string }> }
           <dl className="text-sm space-y-1.5">
             <Row label="Статус"><StatusPill s={data.status} /></Row>
             <Row label="Создана">{new Date(data.created_at).toLocaleString('ru-RU')}</Row>
-            <Row label="Канал">{data.channel_title}</Row>
+            <Row label="Канал">{data.channel_title ?? <span className="text-zinc-400">— без канала —</span>}</Row>
             <Row label="Продукт">
               <Link className="text-indigo-600 hover:underline" href={`/products/${data.product_id}`}>{data.product_name}</Link>
             </Row>

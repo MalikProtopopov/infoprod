@@ -18,7 +18,7 @@ type Product = {
   name: string;
   description: string | null;
   cover_url: string | null;
-  channel_id: number;
+  channel_id: number | null;
   channel_title: string | null;
   price_3m: string;
   price_6m: string;
@@ -68,7 +68,7 @@ export default function ProductsPage() {
     setEditing(p);
     setForm({
       code: p.code, name: p.name, description: p.description ?? '',
-      cover_url: p.cover_url ?? '', channel_id: p.channel_id,
+      cover_url: p.cover_url ?? '', channel_id: p.channel_id ?? '',
       price_3m: p.price_3m, price_6m: p.price_6m, price_12m: p.price_12m,
       currency: p.currency, is_active: p.is_active,
       default_funnel_id: p.default_funnel_id ?? '',
@@ -85,7 +85,7 @@ export default function ProductsPage() {
       name: form.name,
       description: form.description || null,
       cover_url: form.cover_url || null,
-      channel_id: Number(form.channel_id),
+      channel_id: form.channel_id ? Number(form.channel_id) : null,
       price_3m: form.price_3m,
       price_6m: form.price_6m,
       price_12m: form.price_12m,
@@ -128,18 +128,11 @@ export default function ProductsPage() {
         title="Продукты"
         subtitle="Карточки предложений с описанием и ценами по периодам"
         action={
-          <Button onClick={openCreate} disabled={!channels || channels.length === 0}>
+          <Button onClick={openCreate}>
             + Добавить продукт
           </Button>
         }
       />
-
-      {channels && channels.length === 0 && (
-        <div className="mb-4 glass rounded-2xl px-4 py-3 text-sm text-amber-700 flex items-center gap-2">
-          <span>⚠️</span>
-          Сначала добавьте хотя бы один канал.
-        </div>
-      )}
 
       <Card>
         {isLoading && <div className="p-6 text-sm text-zinc-500">Загрузка…</div>}
@@ -160,7 +153,7 @@ export default function ProductsPage() {
                   <Tr key={p.id}>
                     <Td className="font-mono text-xs text-zinc-600">{p.code}</Td>
                     <Td className="font-medium">{p.name}</Td>
-                    <Td className="text-zinc-600">{p.channel_title}</Td>
+                    <Td className="text-zinc-600">{p.channel_title ?? <span className="text-zinc-400">— без канала —</span>}</Td>
                     <Td className="text-xs text-zinc-600">{formatPrices(p)}</Td>
                     <Td>{p.is_active ? <Pill color="green">да</Pill> : <Pill color="gray">нет</Pill>}</Td>
                     <Td className="text-right">
@@ -190,7 +183,7 @@ export default function ProductsPage() {
         footer={
           <>
             <Button variant="ghost" onClick={() => setOpen(false)}>Отмена</Button>
-            <Button onClick={save} disabled={busy || !form.code || !form.name || !form.channel_id}>
+            <Button onClick={save} disabled={busy || !form.code || !form.name}>
               {busy ? '…' : 'Сохранить'}
             </Button>
           </>
@@ -201,12 +194,12 @@ export default function ProductsPage() {
             <Field label="Код" hint="A–Z, 0–9, -, _" required>
               <Input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
             </Field>
-            <Field label="Канал" required>
+            <Field label="Канал" hint="Необязательно. Без канала — продукт-лид-магнит: собирает заявки, связываетесь по контакту.">
               <Select
                 value={form.channel_id}
                 onChange={(e) => setForm({ ...form, channel_id: e.target.value ? Number(e.target.value) : '' })}
               >
-                <option value="">Выберите канал</option>
+                <option value="">— без канала (только заявки) —</option>
                 {(channels || []).map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
               </Select>
             </Field>

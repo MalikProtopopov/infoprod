@@ -46,7 +46,7 @@ async def list_products(
     rows = (
         await session.execute(
             select(Product, Channel.title)
-            .join(Channel, Channel.id == Product.channel_id)
+            .outerjoin(Channel, Channel.id == Product.channel_id)
             .order_by(Product.id.desc())
         )
     ).all()
@@ -62,7 +62,7 @@ async def get_product(
     row = (
         await session.execute(
             select(Product, Channel.title)
-            .join(Channel, Channel.id == Product.channel_id)
+            .outerjoin(Channel, Channel.id == Product.channel_id)
             .where(Product.id == product_id)
         )
     ).one_or_none()
@@ -78,9 +78,12 @@ async def create_product(
     _: Admin = Depends(current_admin),
     session: AsyncSession = Depends(get_session),
 ) -> ProductOut:
-    ch = (await session.execute(select(Channel).where(Channel.id == payload.channel_id))).scalar_one_or_none()
-    if not ch:
-        raise HTTPException(status_code=400, detail="Канал не найден")
+    # Канал необязателен (продукт-лид-магнит). Если указан — проверяем, что существует.
+    ch: Channel | None = None
+    if payload.channel_id is not None:
+        ch = (await session.execute(select(Channel).where(Channel.id == payload.channel_id))).scalar_one_or_none()
+        if not ch:
+            raise HTTPException(status_code=400, detail="Канал не найден")
 
     exists = (
         await session.execute(select(Product).where(Product.code == payload.code))
@@ -105,7 +108,7 @@ async def create_product(
     session.add(p)
     await session.commit()
     await session.refresh(p)
-    return _to_out(p, ch.title)
+    return _to_out(p, ch.title if ch else None)
 
 
 @router.patch("/{product_id}", response_model=ProductOut)
@@ -127,10 +130,15 @@ async def update_product(
             raise HTTPException(status_code=409, detail="Код уже занят")
         if await product_code_conflicts_with_slug(session, data["code"]):
             raise HTTPException(status_code=409, detail="Код совпадает со slug существующей трекинговой ссылки")
-    if "channel_id" in data and data["channel_id"] is not None:
-        ch = (await session.execute(select(Channel).where(Channel.id == data["channel_id"]))).scalar_one_or_none()
-        if not ch:
-            raise HTTPException(status_code=400, detail="Канал не найден")
+    # channel_id обрабатываем отдельно: допускаем явный сброс в None (продукт
+    # без канала), а также проверяем существование при назначении.
+    if "channel_id" in data:
+        new_channel_id = data.pop("channel_id")
+        if new_channel_id is not None:
+            ch = (await session.execute(select(Channel).where(Channel.id == new_channel_id))).scalar_one_or_none()
+            if not ch:
+                raise HTTPException(status_code=400, detail="Канал не найден")
+        p.channel_id = new_channel_id
     for key, value in data.items():
         if value is not None:
             setattr(p, key, value)

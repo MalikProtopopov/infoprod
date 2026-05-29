@@ -73,7 +73,7 @@ async def get_user(
         await session.execute(
             select(Lead, Product.name, Channel.title)
             .join(Product, Product.id == Lead.product_id)
-            .join(Channel, Channel.id == Product.channel_id)
+            .outerjoin(Channel, Channel.id == Product.channel_id)
             .where(Lead.user_id == user.id)
             .order_by(Lead.id.desc())
         )
@@ -83,7 +83,7 @@ async def get_user(
         await session.execute(
             select(Payment, Product.name, Channel.title)
             .join(Product, Product.id == Payment.product_id)
-            .join(Channel, Channel.id == Product.channel_id)
+            .outerjoin(Channel, Channel.id == Product.channel_id)
             .where(Payment.user_id == user.id)
             .order_by(Payment.id.desc())
         )

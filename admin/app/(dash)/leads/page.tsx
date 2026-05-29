@@ -19,7 +19,7 @@ type Lead = {
   user_last_name: string | null;
   product_id: number;
   product_name: string;
-  channel_title: string;
+  channel_title: string | null;
 };
 
 type Resp = { total: number; items: Lead[] };
@@ -90,7 +90,7 @@ export default function LeadsPage() {
                       </Link>
                     </Td>
                     <Td>{l.product_name}</Td>
-                    <Td className="text-zinc-600">{l.channel_title}</Td>
+                    <Td className="text-zinc-600">{l.channel_title ?? <span className="text-zinc-400">—</span>}</Td>
                     <Td><LeadStatusPill s={l.status} /></Td>
                     <Td className="text-right">
                       <Link href={`/leads/${l.id}`} className="text-xs text-indigo-600 hover:text-indigo-800 transition">
