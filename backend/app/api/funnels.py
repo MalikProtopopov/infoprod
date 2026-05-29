@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -403,48 +404,59 @@ async def get_entry_points(
     }
 
 
+class TestRunIn(BaseModel):
+    # Кому слать тест: внутренний user_id ИЛИ telegram_user_id (хотя бы одно).
+    target_user_id: int | None = None
+    telegram_user_id: int | None = None
+
+
 @router.post("/{funnel_id}/test-run", response_model=dict, status_code=201)
 async def test_run(
     funnel_id: int,
+    payload: TestRunIn | None = None,
     admin: Admin = Depends(current_admin),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Запускает тестовый прогон воронки на текущего админа со скоростью x60.
+    """Тестовый прогон воронки на ВЫБРАННОГО пользователя со скоростью x60.
 
-    Каждый шаг с delay_minutes=N будет отправлен через N секунд (не минут).
-    Воркер process_due_messages подхватит scheduled_messages когда их время придёт.
-
-    Возвращает test_user_id для последующего опроса прогресса.
+    Каждый шаг с delay_minutes=N отправляется через N секунд. Сообщения реально
+    придут пользователю в Telegram через бота воронки (выбранный юзер должен
+    был запускать этого бота). Тест-прогоны идут даже если воронка ещё не активна.
     """
     from datetime import datetime, timedelta, timezone
+
+    payload = payload or TestRunIn()
 
     f = await session.get(Funnel, funnel_id)
     if f is None:
         raise HTTPException(status_code=404, detail="Funnel not found")
 
-    # Тест-юзер: используем admin'а как Telegram-юзера, но без реального telegram_user_id.
-    # На самом деле для отправки нужно знать telegram_user_id. Берём env var E2E_TEST_TG_ID
-    # или возвращаем 422 с просьбой указать в запросе. Для упрощения — принимаем admin как реален.
-    # Минимальная версия: создаём виртуального user'а от имени admin'а.
-    # ⚠️ Если у админа нет telegram_user_id (т.е. он не отметил себя через бота) — придётся
-    # попросить указать его в payload. Для v1 — добавим этот endpoint с возможностью передать tg_id.
-
-    test_user = (
-        await session.execute(
-            select(User).where(User.telegram_user_id == admin.id).limit(1)
+    # Определяем целевого пользователя: по внутреннему id или по telegram_user_id.
+    test_user: User | None = None
+    if payload.target_user_id is not None:
+        test_user = await session.get(User, payload.target_user_id)
+        if test_user is None:
+            raise HTTPException(status_code=404, detail="Выбранный пользователь не найден")
+    elif payload.telegram_user_id is not None:
+        test_user = (
+            await session.execute(
+                select(User).where(User.telegram_user_id == payload.telegram_user_id)
+            )
+        ).scalar_one_or_none()
+        if test_user is None:
+            # Юзер с таким TG id ещё не в базе — заводим. Доставка получится,
+            # только если он уже запускал бота (иначе Telegram не даст написать).
+            test_user = User(
+                telegram_user_id=payload.telegram_user_id,
+                notifications_enabled=True,
+            )
+            session.add(test_user)
+            await session.flush()
+    else:
+        raise HTTPException(
+            status_code=422,
+            detail="Выберите пользователя или укажите Telegram ID для теста.",
         )
-    ).scalar_one_or_none()
-
-    if test_user is None:
-        # Создаём виртуального юзера для теста
-        test_user = User(
-            telegram_user_id=-(admin.id),  # отрицательный, чтобы не конфликтовать
-            first_name=admin.username,
-            username=admin.username,
-            notifications_enabled=True,
-        )
-        session.add(test_user)
-        await session.flush()
 
     steps = (
         await session.execute(

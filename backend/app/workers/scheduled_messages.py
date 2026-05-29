@@ -392,7 +392,10 @@ async def process_due_messages(
                     stats["cancelled"] += 1
                     continue
                 funnel = await session.get(Funnel, entry.funnel_id)
-                if funnel is None or not funnel.is_active:
+                # Тест-прогоны (source='manual') идут даже на выключенной воронке —
+                # чтобы можно было проверить до активации.
+                is_test = entry.source == "manual"
+                if funnel is None or (not funnel.is_active and not is_test):
                     await _mark_cancelled(session, msg.id, "funnel_inactive")
                     stats["cancelled"] += 1
                     continue

@@ -913,14 +913,24 @@ function Section4Launch({
 }) {
   const [testRunId, setTestRunId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+  const [testOpen, setTestOpen] = useState(false);
+  const [testQ, setTestQ] = useState('');
+  const [manualTg, setManualTg] = useState('');
 
   const allReady = stepsOk && entryOk;
 
-  async function runTest() {
+  // Юзеры бота воронки — для выбора, на кого слать тест.
+  const usersKey = testOpen
+    ? `/users?limit=20${funnel.bot_id ? `&bot_id=${funnel.bot_id}` : ''}${testQ ? `&q=${encodeURIComponent(testQ)}` : ''}`
+    : null;
+  const { data: testUsers } = useSWR<{ items: Array<{ id: number; telegram_user_id: number; username: string | null; first_name: string | null; last_name: string | null; bots: Array<{ bot_id: number; is_blocked: boolean }> }> }>(usersKey, fetcher);
+
+  async function runTest(body: { target_user_id?: number; telegram_user_id?: number }) {
     setBusy(true);
     try {
-      const res = await api.post<{ test_entry_id: number }>(`/funnels/${funnel.id}/test-run`);
+      const res = await api.post<{ test_entry_id: number }>(`/funnels/${funnel.id}/test-run`, body);
       setTestRunId(res.test_entry_id);
+      setTestOpen(false);
     } catch (e) {
       alert(e instanceof Error ? e.message : String(e));
     } finally { setBusy(false); }
@@ -968,8 +978,8 @@ function Section4Launch({
         </div>
 
         <div className="flex gap-2 flex-wrap">
-          <Button onClick={runTest} variant="ghost" disabled={busy || !stepsOk}>
-            {busy ? 'Запускаем…' : '▶ Тест на меня (x60)'}
+          <Button onClick={() => setTestOpen(true)} variant="ghost" disabled={busy || !stepsOk}>
+            ▶ Тест на пользователя (x60)
           </Button>
           {funnel.is_active ? (
             <Button onClick={deactivate} variant="danger">Деактивировать</Button>
@@ -993,6 +1003,65 @@ function Section4Launch({
           />
         )}
       </div>
+
+      {testOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/30 backdrop-blur-[2px] p-4" onClick={() => setTestOpen(false)}>
+          <div className="glass rounded-2xl w-full max-w-md p-5 space-y-3 anim-rise" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold">Тест воронки ×60</h3>
+              <button className="text-zinc-400 hover:text-zinc-700" onClick={() => setTestOpen(false)}>✕</button>
+            </div>
+            <div className="text-xs text-zinc-500">
+              Бот: <span className="font-medium text-zinc-700">{botUsername ? '@' + botUsername : 'бот воронки'}</span>.
+              Шаги придут выбранному пользователю в Telegram ускоренно (минуты → секунды).
+            </div>
+            <div className="text-[11px] text-amber-700 bg-amber-50/70 border border-amber-200/60 rounded-lg px-2.5 py-1.5">
+              ⚠️ Выбранный пользователь реально получит сообщения. Выбирайте себя или тестовый аккаунт (он должен был запускать этого бота).
+            </div>
+
+            <Field label="Найти пользователя бота">
+              <Input value={testQ} onChange={(e) => setTestQ(e.target.value)} placeholder="имя, @username или TG id…" />
+            </Field>
+            <div className="max-h-56 overflow-y-auto rounded-xl border border-zinc-200/60 divide-y divide-zinc-100">
+              {(testUsers?.items ?? []).length === 0 ? (
+                <div className="text-xs text-zinc-400 text-center py-4">
+                  {funnel.bot_id ? 'Нет пользователей этого бота' : 'Нет пользователей'} — введите TG id вручную ниже
+                </div>
+              ) : (
+                (testUsers?.items ?? []).map((u) => {
+                  const blocked = u.bots?.some((b) => b.bot_id === funnel.bot_id && b.is_blocked);
+                  return (
+                    <button
+                      key={u.id}
+                      disabled={busy || blocked}
+                      onClick={() => runTest({ target_user_id: u.id })}
+                      className="w-full text-left px-3 py-2 hover:bg-white/70 transition flex items-center justify-between gap-2 disabled:opacity-50"
+                    >
+                      <span className="text-sm">
+                        {[u.first_name, u.last_name].filter(Boolean).join(' ') || (u.username ? '@' + u.username : `#${u.id}`)}
+                        {u.username && <span className="text-zinc-400 ml-1">@{u.username}</span>}
+                      </span>
+                      <span className="text-[11px] text-zinc-400 font-mono">{blocked ? '🚫 заблокировал' : u.telegram_user_id}</span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="flex gap-2 items-end pt-1">
+              <Field label="или Telegram ID вручную">
+                <Input value={manualTg} onChange={(e) => setManualTg(e.target.value.replace(/[^0-9-]/g, ''))} placeholder="напр. 123456789" />
+              </Field>
+              <Button
+                onClick={() => runTest({ telegram_user_id: Number(manualTg) })}
+                disabled={busy || !manualTg}
+              >
+                {busy ? '…' : 'Запустить'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </Card>
   );
 }
