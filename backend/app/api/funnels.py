@@ -499,7 +499,10 @@ async def test_run(
         )
     ).scalars().all()
     for e in existing_active:
-        if not e.is_test:
+        # Тест-прогоны помечены is_test, а старые (до флага) — source='manual'.
+        # Реальную подписку (любой другой source) не трогаем.
+        is_clobberable = e.is_test or e.source == "manual"
+        if not is_clobberable:
             raise HTTPException(
                 status_code=409,
                 detail="У этого пользователя уже есть активная подписка на воронку — "
