@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import current_admin, get_session
@@ -485,6 +485,40 @@ async def test_run(
         raise HTTPException(status_code=422, detail="В воронке нет активных шагов")
 
     now = datetime.now(tz=timezone.utc)
+
+    # На пару (воронка, юзер) разрешён лишь один активный entry (unique index).
+    # Поэтому прошлый активный ТЕСТ-прогон этого юзера снимаем (можно тестить
+    # повторно после refresh). Реальную (не тестовую) подписку не трогаем.
+    existing_active = (
+        await session.execute(
+            select(FunnelEntry).where(
+                FunnelEntry.funnel_id == funnel_id,
+                FunnelEntry.user_id == test_user.id,
+                FunnelEntry.status == "active",
+            )
+        )
+    ).scalars().all()
+    for e in existing_active:
+        if not e.is_test:
+            raise HTTPException(
+                status_code=409,
+                detail="У этого пользователя уже есть активная подписка на воронку — "
+                       "выберите для теста другого пользователя.",
+            )
+        await session.execute(
+            update(ScheduledMessage)
+            .where(
+                ScheduledMessage.funnel_entry_id == e.id,
+                ScheduledMessage.sent_at.is_(None),
+                ScheduledMessage.cancelled_at.is_(None),
+            )
+            .values(cancelled_at=now, cancel_reason="test_restarted")
+        )
+        e.status = "cancelled"
+        e.cancelled_at = now
+        e.cancel_reason = "test_restarted"
+    await session.flush()
+
     # Создаём entry с source='manual', чтобы отличать от реальных
     entry = FunnelEntry(
         funnel_id=funnel_id,
