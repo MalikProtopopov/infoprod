@@ -290,6 +290,25 @@ async def _send_flow_messages(
         kb = _flow_buttons_to_markup(msg.buttons, append_main_menu=append_main_menu)
         await target.answer(msg.text, reply_markup=kb, parse_mode=ParseMode.HTML)
 
+    # Лог исходящих сообщений квиза/формы в чат (best-effort, отдельная сессия).
+    try:
+        aiogram_bot = getattr(target, "bot", None)
+        chat = getattr(target, "chat", None)
+        tg_user_id = getattr(chat, "id", None)
+        if aiogram_bot is not None and tg_user_id is not None and msgs:
+            async with SessionLocal() as s:
+                bot_id = await _resolve_bot_id(s, aiogram_bot)
+                uid = (
+                    await s.execute(select(User.id).where(User.telegram_user_id == tg_user_id))
+                ).scalar_one_or_none()
+                if bot_id is not None and uid is not None:
+                    from app.services import messages as messages_svc
+                    for msg in msgs:
+                        await messages_svc.log(s, user_id=uid, bot_id=bot_id, direction="out", text=msg.text)
+                    await s.commit()
+    except Exception:  # noqa: BLE001
+        logger.debug("flow_messages.log_failed", exc_info=True)
+
 
 async def _flush_funnel_entry_now(entry_id: int) -> int:
     """Немедленно отправить все scheduled_messages этого entry, у которых

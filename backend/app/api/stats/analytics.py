@@ -321,6 +321,7 @@ async def stats_timeline(
     granularity: str = Query(default="day", pattern="^(day|week|month)$"),
     dimension: str = Query(default="source", pattern="^(source|campaign|product|funnel|none)$"),
     product_id: int | None = Query(default=None),
+    bot_id: int | None = Query(default=None),
     attribution: str = Query(default="last", pattern="^(last|first)$"),
 ) -> dict:
     """Timeline по дням/неделям/месяцам, с разрезом по выбранному dimension.
@@ -374,6 +375,10 @@ async def stats_timeline(
 
     if product_id is not None:
         lead_q = lead_q.where(Lead.product_id == product_id)
+    # Фильтр по боту: атрибуция через бот первого касания пользователя.
+    if bot_id is not None:
+        _bot_users = select(User.id).where(User.first_bot_id == bot_id)
+        lead_q = lead_q.where(Lead.user_id.in_(_bot_users))
     if lead_dim_col is not None:
         lead_q = lead_q.group_by(bucket, lead_dim_col)
     else:
@@ -420,6 +425,9 @@ async def stats_timeline(
 
     if product_id is not None:
         pay_q = pay_q.where(Payment.product_id == product_id)
+    if bot_id is not None:
+        _bot_users_p = select(User.id).where(User.first_bot_id == bot_id)
+        pay_q = pay_q.where(Payment.user_id.in_(_bot_users_p))
     if pay_dim_col is not None:
         pay_q = pay_q.group_by(pay_bucket, pay_dim_col)
     else:

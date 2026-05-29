@@ -122,8 +122,9 @@ export default function AnalyticsPage() {
       from, to, granularity, dimension, attribution,
     });
     if (productId) params.set('product_id', String(productId));
+    if (botId) params.set('bot_id', String(botId));
     return `/stats/timeline?${params}`;
-  }, [period, granularity, dimension, attribution, productId]);
+  }, [period, granularity, dimension, attribution, productId, botId]);
 
   const { data: timeline, isLoading: timelineLoading } = useSWR<TimelineResp>(timelineKey, fetcher, {
     revalidateOnFocus: false,
@@ -215,7 +216,7 @@ export default function AnalyticsPage() {
           value={botId}
           onChange={(e) => setBotId(e.target.value ? Number(e.target.value) : '')}
           className="!w-auto"
-          title="Фильтр сводки по воронкам по боту"
+          title="Фильтр статистики по боту (по боту первого касания)"
         >
           <option value="">Все боты</option>
           {(bots || []).map((b) => (

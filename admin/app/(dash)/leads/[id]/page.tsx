@@ -21,14 +21,15 @@ type LeadDetail = {
   user_phone: string | null;
   user_email: string | null;
   user_notes: string | null;
-  product_id: number;
-  product_code: string;
-  product_name: string;
+  product_id: number | null;
+  product_code: string | null;
+  product_name: string | null;
   product_description: string | null;
-  product_currency: string;
-  product_price_3m: string;
-  product_price_6m: string;
-  product_price_12m: string;
+  product_currency: string | null;
+  product_price_3m: string | null;
+  product_price_6m: string | null;
+  product_price_12m: string | null;
+  extra_data: Record<string, unknown> | null;
   channel_id: number | null;
   channel_title: string | null;
   payment_id: number | null;
@@ -117,9 +118,16 @@ export default function LeadPage({ params }: { params: Promise<{ id: string }> }
             <Row label="Создана">{new Date(data.created_at).toLocaleString('ru-RU')}</Row>
             <Row label="Канал">{data.channel_title ?? <span className="text-zinc-400">— без канала —</span>}</Row>
             <Row label="Продукт">
-              <Link className="text-indigo-600 hover:underline" href={`/products/${data.product_id}`}>{data.product_name}</Link>
+              {data.product_id
+                ? <Link className="text-indigo-600 hover:underline" href={`/products/${data.product_id}`}>{data.product_name}</Link>
+                : <span className="text-zinc-400">— без продукта —</span>}
             </Row>
-            <Row label="Код продукта"><code className="text-xs">{data.product_code}</code></Row>
+            {data.product_code && <Row label="Код продукта"><code className="text-xs">{data.product_code}</code></Row>}
+            {typeof data.extra_data?.text === 'string' && data.extra_data?.source === 'free_text' && (
+              <Row label="Сообщение">
+                <span className="text-zinc-900">{data.extra_data.text as string}</span>
+              </Row>
+            )}
             {data.payment_id && (
               <Row label="Платёж">
                 <span className="text-emerald-700 font-medium">
@@ -156,6 +164,7 @@ export default function LeadPage({ params }: { params: Promise<{ id: string }> }
         </Card>
       </div>
 
+      {data.product_id && (
       <Card padded className="mt-5 anim-rise">
         <h3 className="font-semibold mb-3 flex items-center gap-2">
           <span className="size-1.5 rounded-full bg-rose-500" /> Продукт
@@ -171,6 +180,7 @@ export default function LeadPage({ params }: { params: Promise<{ id: string }> }
           </div>
         </div>
       </Card>
+      )}
 
       {payModal && (
         <PaymentModal
@@ -410,7 +420,7 @@ function StatusPill({ s }: { s: string }) {
 
 function formatPrices(d: LeadDetail): string[] {
   const out: string[] = [];
-  const pairs: Array<[string, string]> = [
+  const pairs: Array<[string, string | null]> = [
     ['3 мес', d.product_price_3m],
     ['6 мес', d.product_price_6m],
     ['12 мес', d.product_price_12m],

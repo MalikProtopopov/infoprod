@@ -269,36 +269,36 @@ async def on_text_message(m: Message, bot: Bot) -> None:
                     await _send_flow_messages(m, result.messages)
                 return
 
-        # 2) Триггер-слово (только короткие тексты)
-        if not is_enabled("funnel_triggers"):
-            await session.commit()
-            return
-        if len(text) > 64:
-            await session.commit()
-            return
+        # 2) Триггер-слово (только короткие тексты). Длинный/неизвестный текст
+        #    трактуем как свободное обращение → авто-заявка (ниже).
         from app.services.funnel_triggers import FunnelTriggersService
         from app.services.funnels import FunnelsService
 
-        triggers = FunnelTriggersService(session)
-        trigger = await triggers.find_by_word(text)
-        if trigger is None:
-            await session.commit()
-            return
+        trigger = None
+        if is_enabled("funnel_triggers") and len(text) <= 64:
+            triggers = FunnelTriggersService(session)
+            trigger = await triggers.find_by_word(text)
 
-        funnels = FunnelsService(session)
-        existing = await funnels.find_active_entry(
-            user_id=user.id, funnel_id=trigger.funnel_id,
-        )
         new_entry_id: int | None = None
-        if existing is None:
-            new_entry = await funnels.start_for_user(
-                user_id=user.id,
-                funnel_id=trigger.funnel_id,
-                source="code_word",
-                source_ref=trigger.id,
+        auto_lead_created = False
+        if trigger is not None:
+            funnels = FunnelsService(session)
+            existing = await funnels.find_active_entry(
+                user_id=user.id, funnel_id=trigger.funnel_id,
             )
-            new_entry_id = new_entry.id if new_entry is not None else None
-            await triggers.increment_use_count(trigger.id)
+            if existing is None:
+                new_entry = await funnels.start_for_user(
+                    user_id=user.id,
+                    funnel_id=trigger.funnel_id,
+                    source="code_word",
+                    source_ref=trigger.id,
+                )
+                new_entry_id = new_entry.id if new_entry is not None else None
+                await triggers.increment_use_count(trigger.id)
+        else:
+            # Свободный текст вне сценария → авто-заявка (если фича leads вкл.).
+            if is_enabled("leads"):
+                auto_lead_created = await _auto_lead_from_text(session, user, text)
         await session.commit()
 
     # Sync-доставка шагов с delay=0 (типично — D0). Если что-то отправилось,
@@ -306,8 +306,33 @@ async def on_text_message(m: Message, bot: Bot) -> None:
     sent = 0
     if new_entry_id is not None:
         sent = await _flush_funnel_entry_now(new_entry_id)
-    if sent == 0:
+    if new_entry_id is not None and sent == 0:
         await m.answer(texts.CODE_WORD_ACCEPTED)
+    elif auto_lead_created:
+        await m.answer(texts.INBOUND_RECEIVED)
+
+
+async def _auto_lead_from_text(session: AsyncSession, user: User, text: str) -> bool:
+    """Создаёт заявку из свободного сообщения пользователя. Дедуп: не плодим —
+    одна «новая» заявка на юзера в окне 6 часов. Возвращает True если создали."""
+    recent = (
+        await session.execute(
+            select(Lead.id).where(
+                Lead.user_id == user.id,
+                Lead.status == "new",
+                Lead.created_at > datetime.now(tz=timezone.utc) - timedelta(hours=6),
+            ).limit(1)
+        )
+    ).first()
+    if recent is not None:
+        return False
+    session.add(Lead(
+        user_id=user.id,
+        product_id=user.first_product_id,
+        status="new",
+        extra_data={"source": "free_text", "text": text[:2000]},
+    ))
+    return True
 
 
 @router.callback_query(F.data == "menu:main")

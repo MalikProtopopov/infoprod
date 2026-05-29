@@ -36,15 +36,15 @@ class LeadOut(BaseModel):
     user_phone: str | None = None
     user_email: str | None = None
     user_notes: str | None = None
-    # продукт
-    product_id: int
-    product_code: str
-    product_name: str
+    # продукт (может отсутствовать — напр. заявка из свободного текста)
+    product_id: int | None = None
+    product_code: str | None = None
+    product_name: str | None = None
     product_description: str | None = None
-    product_currency: str
-    product_price_3m: Decimal
-    product_price_6m: Decimal
-    product_price_12m: Decimal
+    product_currency: str | None = None
+    product_price_3m: Decimal | None = None
+    product_price_6m: Decimal | None = None
+    product_price_12m: Decimal | None = None
     # канал, к которому ведёт продукт (может отсутствовать у продуктов-лид-магнитов)
     channel_id: int | None = None
     channel_title: str | None = None
@@ -54,5 +54,7 @@ class LeadOut(BaseModel):
     payment_currency: str | None = None
     cancel_reason: str | None = None
     cancelled_at: datetime | None = None
+    # Доп. данные (ответы формы / текст входящего сообщения для авто-заявок)
+    extra_data: dict | None = None
 
     model_config = {"from_attributes": True}

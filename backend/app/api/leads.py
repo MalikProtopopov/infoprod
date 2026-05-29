@@ -28,7 +28,7 @@ CANCEL_REASON_PRESETS = [
 
 
 def _to_out(
-    lead: Lead, user: User, product: Product, channel: Channel | None, payment: Payment | None = None
+    lead: Lead, user: User, product: Product | None, channel: Channel | None, payment: Payment | None = None
 ) -> LeadOut:
     return LeadOut(
         id=lead.id,
@@ -43,16 +43,17 @@ def _to_out(
         user_phone=user.phone,
         user_email=user.email,
         user_notes=user.notes,
-        product_id=product.id,
-        product_code=product.code,
-        product_name=product.name,
-        product_description=product.description,
-        product_currency=product.currency,
-        product_price_3m=product.price_3m,
-        product_price_6m=product.price_6m,
-        product_price_12m=product.price_12m,
+        product_id=product.id if product else None,
+        product_code=product.code if product else None,
+        product_name=product.name if product else None,
+        product_description=product.description if product else None,
+        product_currency=product.currency if product else None,
+        product_price_3m=product.price_3m if product else None,
+        product_price_6m=product.price_6m if product else None,
+        product_price_12m=product.price_12m if product else None,
         channel_id=channel.id if channel else None,
         channel_title=channel.title if channel else None,
+        extra_data=lead.extra_data if isinstance(lead.extra_data, dict) else None,
         payment_id=lead.payment_id,
         payment_amount=payment.amount if payment else None,
         payment_currency=payment.currency if payment else None,
@@ -72,7 +73,7 @@ async def list_leads(
     stmt = (
         select(Lead, User, Product, Channel, Payment)
         .join(User, User.id == Lead.user_id)
-        .join(Product, Product.id == Lead.product_id)
+        .outerjoin(Product, Product.id == Lead.product_id)
         .outerjoin(Channel, Channel.id == Product.channel_id)
         .outerjoin(Payment, Payment.id == Lead.payment_id)
         .order_by(Lead.id.desc())
@@ -196,9 +197,13 @@ async def update_lead(
     await session.refresh(lead)
 
     user = (await session.execute(select(User).where(User.id == lead.user_id))).scalar_one()
-    product = (await session.execute(select(Product).where(Product.id == lead.product_id))).scalar_one()
+    product = None
+    if lead.product_id is not None:
+        product = (
+            await session.execute(select(Product).where(Product.id == lead.product_id))
+        ).scalar_one_or_none()
     channel = None
-    if product.channel_id is not None:
+    if product is not None and product.channel_id is not None:
         channel = (
             await session.execute(select(Channel).where(Channel.id == product.channel_id))
         ).scalar_one_or_none()
