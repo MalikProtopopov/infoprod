@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -27,3 +28,6 @@ class FunnelEntry(Base):
     cancel_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 'active' | 'completed' | 'cancelled'
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    # Теги сегментации, проставленные track-кнопками (напр. ["hot"]). Шаги с
+    # audience_tags показываются только если у entry есть нужный тег.
+    tags: Mapped[list | None] = mapped_column(JSONB, nullable=True)

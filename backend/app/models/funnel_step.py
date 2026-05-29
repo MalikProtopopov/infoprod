@@ -42,4 +42,14 @@ class FunnelStep(Base):
     form_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("forms.id", ondelete="SET NULL"), nullable=True
     )
+    # Сегментация: показывать шаг только если у entry есть хотя бы один из этих
+    # тегов (проставленных track-кнопками). Пусто/None — показывать всем.
+    audience_tags: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    # Условие отправки, проверяется в момент доставки:
+    #   'always'                 — всегда
+    #   'if_no_click_since_prev' — только если после прошлого шага не было клика
+    #                              (например «тихий» день 14 для не отреагировавших)
+    send_condition: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="always", server_default="always"
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

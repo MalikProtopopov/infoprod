@@ -63,6 +63,8 @@ def _step_to_out(s: FunnelStep, media: list | None = None) -> FunnelStepOut:
         buttons=s.buttons, is_active=s.is_active,
         kind=getattr(s, "kind", "message") or "message",
         quiz_id=s.quiz_id, form_id=s.form_id,
+        audience_tags=getattr(s, "audience_tags", None),
+        send_condition=getattr(s, "send_condition", "always") or "always",
         media=media_briefs,
     )
 
@@ -276,6 +278,8 @@ async def add_step(
         kind=payload.kind,
         quiz_id=payload.quiz_id,
         form_id=payload.form_id,
+        audience_tags=payload.audience_tags,
+        send_condition=payload.send_condition,
     )
     await session.commit()
     await session.refresh(step)

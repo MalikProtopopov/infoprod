@@ -14,6 +14,7 @@ from app.models.funnel import Funnel  # noqa: F401
 from app.models.funnel_step import FunnelStep  # noqa: F401
 from app.models.funnel_step_media import FunnelStepMedia  # noqa: F401
 from app.models.funnel_entry import FunnelEntry  # noqa: F401
+from app.models.funnel_event import FunnelEvent  # noqa: F401
 from app.models.funnel_trigger import FunnelTrigger  # noqa: F401
 from app.models.scheduled_message import ScheduledMessage  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401

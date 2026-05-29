@@ -24,7 +24,7 @@ import { UploadProgress } from '@/components/MediaThumb';
 export type StepMedia = {
   id: number;
   funnel_step_id: number;
-  media_type: 'photo' | 'video' | 'animation' | 'audio' | 'document' | 'voice';
+  media_type: 'photo' | 'video' | 'animation' | 'audio' | 'document' | 'voice' | 'video_note';
   mime_type: string;
   file_size: number;
   width: number | null;
@@ -83,6 +83,7 @@ function typeIcon(t: StepMedia['media_type']): string {
     audio: '🎵',
     voice: '🎙',
     document: '📎',
+    video_note: '🔵',
   } as const)[t];
 }
 
@@ -94,6 +95,7 @@ function typeBgClass(t: StepMedia['media_type']): string {
     audio: 'bg-amber-50 text-amber-700',
     voice: 'bg-amber-50 text-amber-700',
     document: 'bg-zinc-100 text-zinc-700',
+    video_note: 'bg-indigo-50 text-indigo-700',
   } as const)[t];
 }
 
@@ -104,6 +106,7 @@ export function StepMediaPanel({ stepId }: { stepId: number }) {
   );
   const { showToast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
+  const noteInputRef = useRef<HTMLInputElement>(null);
   const [drag, setDrag] = useState(false);
   const [uploading, setUploading] = useState(0);
   const [progress, setProgress] = useState<number | null>(null);
@@ -112,21 +115,44 @@ export function StepMediaPanel({ stepId }: { stepId: number }) {
 
   const list = media || [];
   const remaining = MEDIA_GROUP_MAX - list.length;
+  const hasVideoNote = list.some((m) => m.media_type === 'video_note');
 
   const uploadFile = useCallback(
-    async (file: File) => {
-      const err = validateFileBeforeUpload(file, list.length);
-      if (err) {
-        showToast(err, { type: 'error', durationMs: 4500 });
+    async (file: File, asVideoNote = false) => {
+      // Кружок — единственное медиа шага.
+      if (asVideoNote && list.length > 0) {
+        showToast('Кружок — единственное медиа шага. Удалите остальные медиа.', { type: 'error', durationMs: 4500 });
         return;
+      }
+      if (!asVideoNote && hasVideoNote) {
+        showToast('На шаге кружок — другие медиа добавить нельзя.', { type: 'error', durationMs: 4500 });
+        return;
+      }
+      if (asVideoNote) {
+        if (!(file.type || '').startsWith('video/')) {
+          showToast('Кружок делается из видео (MP4/MOV).', { type: 'error', durationMs: 4500 });
+          return;
+        }
+        if (file.size > GENERIC_LIMIT) {
+          showToast('Видео больше 50 MB — Telegram Bot API не примет.', { type: 'error', durationMs: 4500 });
+          return;
+        }
+      } else {
+        const err = validateFileBeforeUpload(file, list.length);
+        if (err) {
+          showToast(err, { type: 'error', durationMs: 4500 });
+          return;
+        }
       }
       setUploading((n) => n + 1);
       setProgress(0);
       try {
         const form = new FormData();
         form.append('file', file);
+        if (asVideoNote) form.append('as_video_note', 'true');
         await api.postFormProgress<StepMedia>(`/funnel-steps/${stepId}/media`, form, setProgress);
         await mutate();
+        if (asVideoNote) showToast('Кружок загружен (обрезан в квадрат ≤60с)');
       } catch (e) {
         const msg = e instanceof Error ? e.message : 'Не удалось загрузить файл';
         showToast(msg, { type: 'error', durationMs: 5000 });
@@ -135,8 +161,14 @@ export function StepMediaPanel({ stepId }: { stepId: number }) {
         setProgress(null);
       }
     },
-    [stepId, list.length, mutate, showToast],
+    [stepId, list.length, hasVideoNote, mutate, showToast],
   );
+
+  async function onNoteInput(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = (e.target.files || [])[0];
+    if (f) await uploadFile(f, true);
+    e.target.value = '';
+  }
 
   async function onDrop(e: React.DragEvent) {
     e.preventDefault();
@@ -243,6 +275,29 @@ export function StepMediaPanel({ stepId }: { stepId: number }) {
         />
       </div>
 
+      {/* Кружок (video_note): отдельная загрузка — это единственное медиа шага */}
+      {list.length === 0 && (
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => noteInputRef.current?.click()}
+            className="inline-flex items-center gap-1.5 text-xs px-3 h-8 rounded-lg border border-indigo-200/70 bg-indigo-50/60 text-indigo-700 hover:bg-indigo-100/60 transition"
+          >
+            🔵 Загрузить кружком
+          </button>
+          <span className="text-[11px] text-zinc-400">
+            видео → квадрат ≤60с, отдельным сообщением (без подписи/кнопок на самом кружке)
+          </span>
+          <input
+            ref={noteInputRef}
+            type="file"
+            className="hidden"
+            accept="video/*"
+            onChange={onNoteInput}
+          />
+        </div>
+      )}
+
       {progress !== null && (
         <UploadProgress percent={progress} />
       )}
@@ -299,6 +354,10 @@ export function StepMediaPanel({ stepId }: { stepId: number }) {
                       <div className="size-16 rounded-lg bg-zinc-900 flex items-center justify-center text-white text-xl">
                         ▶
                       </div>
+                    ) : m.media_type === 'video_note' ? (
+                      <div className="size-16 rounded-full bg-zinc-900 flex items-center justify-center text-white text-xl ring-2 ring-indigo-200">
+                        ▶
+                      </div>
                     ) : (
                       <div className={clsx('size-16 rounded-lg flex items-center justify-center text-2xl', typeBgClass(m.media_type))}>
                         {typeIcon(m.media_type)}
@@ -322,18 +381,24 @@ export function StepMediaPanel({ stepId }: { stepId: number }) {
                       #{m.order_idx + 1} · {m.media_type} · {formatSize(m.file_size)}
                       {m.width && m.height && ` · ${m.width}×${m.height}`}
                     </div>
-                    <textarea
-                      defaultValue={m.caption || ''}
-                      onBlur={(e) => {
-                        if ((e.target.value || '') !== (m.caption || '')) {
-                          updateCaption(m, e.target.value);
-                        }
-                      }}
-                      placeholder="Подпись к медиа (опционально)"
-                      rows={1}
-                      maxLength={1024}
-                      className="mt-1.5 w-full text-xs px-2 py-1 rounded-md border border-zinc-200 bg-white/60 resize-y focus:outline-none focus:border-indigo-400"
-                    />
+                    {m.media_type === 'video_note' ? (
+                      <div className="mt-1.5 text-[11px] text-zinc-400">
+                        Кружок · без подписи · текст и кнопки шага придут отдельным сообщением
+                      </div>
+                    ) : (
+                      <textarea
+                        defaultValue={m.caption || ''}
+                        onBlur={(e) => {
+                          if ((e.target.value || '') !== (m.caption || '')) {
+                            updateCaption(m, e.target.value);
+                          }
+                        }}
+                        placeholder="Подпись к медиа (опционально)"
+                        rows={1}
+                        maxLength={1024}
+                        className="mt-1.5 w-full text-xs px-2 py-1 rounded-md border border-zinc-200 bg-white/60 resize-y focus:outline-none focus:border-indigo-400"
+                      />
+                    )}
                   </div>
 
                   <button

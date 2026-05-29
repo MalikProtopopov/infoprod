@@ -14,12 +14,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.features import is_enabled
 from app.models.funnel import Funnel
 from app.models.funnel_entry import FunnelEntry
+from app.models.funnel_event import FunnelEvent
 from app.models.funnel_step import FunnelStep
 from app.models.funnel_step_media import FunnelStepMedia
 from app.models.scheduled_message import ScheduledMessage
@@ -219,6 +220,18 @@ async def _send_single_media(
             await aio_bot.send_message(chat_id, text, parse_mode=parse_mode, reply_markup=keyboard,
                                        disable_web_page_preview=True)
             return await aio_bot.send_voice(chat_id, src)
+        if media.media_type == "video_note":
+            # Кружок не поддерживает ни caption, ни кнопки — текст+кнопки шлём
+            # отдельным сообщением, затем сам кружок. length (диаметр) и
+            # duration помогают клиенту сразу отрисовать круг.
+            if text or keyboard:
+                await aio_bot.send_message(chat_id, text, parse_mode=parse_mode, reply_markup=keyboard,
+                                           disable_web_page_preview=True)
+            return await aio_bot.send_video_note(
+                chat_id, src,
+                length=getattr(media, "width", None),
+                duration=getattr(media, "duration", None),
+            )
         # document
         return await aio_bot.send_document(chat_id, src, caption=caption, parse_mode=parse_mode, reply_markup=keyboard)
 
@@ -406,6 +419,15 @@ async def process_due_messages(
                 stats["cancelled"] += 1
                 continue
 
+            # Сегментация/условие: шаг может быть не для этого сегмента или
+            # отменён условием (например «тихий» шаг для тех, кто не кликал).
+            if entry is not None:
+                skip_reason = await _should_skip_step(session, entry, step)
+                if skip_reason is not None:
+                    await _mark_cancelled(session, msg.id, skip_reason)
+                    stats["cancelled"] += 1
+                    continue
+
             text = _render_template(step.message_text, user)
             keyboard = _build_keyboard(step.buttons)
             parse_mode = step.parse_mode or "HTML"
@@ -463,6 +485,45 @@ async def process_due_messages(
     if any(stats.values()):
         logger.info("scheduled_messages.processed", **stats, batch=len(rows))
     return stats
+
+
+async def _should_skip_step(
+    session: AsyncSession, entry: FunnelEntry, step: FunnelStep
+) -> str | None:
+    """Причина пропуска шага в момент доставки (или None — отправлять).
+
+    - audience_tags: показываем шаг только если у entry есть хотя бы один из
+      указанных тегов (сегментация track-кнопками).
+    - send_condition='if_no_click_since_prev': пропускаем, если после прошлого
+      отправленного шага этого entry был клик (например «тихий» день 14 — только
+      тем, кто не отреагировал).
+    """
+    audience = getattr(step, "audience_tags", None)
+    if audience:
+        entry_tags = set(entry.tags or [])
+        if not entry_tags.intersection(set(audience)):
+            return "audience_mismatch"
+
+    cond = getattr(step, "send_condition", "always") or "always"
+    if cond == "if_no_click_since_prev":
+        prev_sent_at = (
+            await session.execute(
+                select(func.max(ScheduledMessage.sent_at)).where(
+                    ScheduledMessage.funnel_entry_id == entry.id,
+                    ScheduledMessage.sent_at.is_not(None),
+                )
+            )
+        ).scalar_one_or_none()
+        ev_stmt = select(FunnelEvent.id).where(
+            FunnelEvent.funnel_entry_id == entry.id,
+            FunnelEvent.event_type == "click",
+        )
+        if prev_sent_at is not None:
+            ev_stmt = ev_stmt.where(FunnelEvent.created_at > prev_sent_at)
+        has_click = (await session.execute(ev_stmt.limit(1))).first() is not None
+        if has_click:
+            return "condition_click_since_prev"
+    return None
 
 
 def _any_active_bot(bot_manager) -> Any | None:

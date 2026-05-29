@@ -17,6 +17,8 @@ class FunnelStepIn(BaseModel):
     kind: str = "message"
     quiz_id: int | None = None
     form_id: int | None = None
+    audience_tags: list[str] | None = None
+    send_condition: str = "always"
 
 
 class StepMediaBrief(BaseModel):
@@ -48,6 +50,8 @@ class FunnelStepOut(BaseModel):
     kind: str = "message"
     quiz_id: int | None = None
     form_id: int | None = None
+    audience_tags: list[str] | None = None
+    send_condition: str = "always"
     media: list[StepMediaBrief] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}

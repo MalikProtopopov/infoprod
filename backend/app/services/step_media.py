@@ -108,30 +108,60 @@ class StepMediaService:
         original_filename: str | None,
         declared_mime: str | None,
         caption: str | None = None,
+        as_video_note: bool = False,
     ) -> FunnelStepMedia:
         if not content:
             raise InvalidMediaError("Файл пустой")
 
         # Проверяем лимит media-group до записи на диск
         existing = await self.list_for_step(step_id)
+        has_video_note = any(m.media_type == "video_note" for m in existing)
+        # Кружок (video_note) — единственное медиа шага: у него нет подписи и
+        # его нельзя класть в альбом, поэтому он несовместим с другими медиа.
+        if as_video_note and existing:
+            raise InvalidMediaError(
+                "Кружок — единственное медиа шага. Удалите остальные медиа перед загрузкой кружка."
+            )
+        if not as_video_note and has_video_note:
+            raise InvalidMediaError(
+                "На шаге кружок — другие медиа добавить нельзя. Удалите кружок или создайте отдельный шаг."
+            )
         if len(existing) >= MEDIA_GROUP_MAX:
             raise InvalidMediaError(
                 f"У шага уже {MEDIA_GROUP_MAX} медиа — лимит Telegram media-group"
             )
 
         mime = _detect_mime(original_filename, declared_mime)
-        media_type = infer_media_type(mime)
+        media_type = "video_note" if as_video_note else infer_media_type(mime)
         file_size = len(content)
-        _validate_size(media_type, file_size)
+        # Кружок проверяем по лимиту видео (≤50 MB) до ffmpeg-обработки.
+        _validate_size("video" if media_type == "video_note" else media_type, file_size)
 
         # Размеры для фото — best effort
-        width = height = None
+        width = height = duration = None
         if media_type == "photo":
             width, height = _image_dimensions(content)
 
         checksum = hashlib.sha256(content).hexdigest()
 
         dst_path, _stored_name = _save_to_disk(content, step_id, original_filename)
+
+        # Кружок обязан быть квадратным ≤60с — приводим через ffmpeg
+        # (как в блоках продукта). Если ffmpeg недоступен/упал — оставляем
+        # исходник: уже-квадратное видео уйдёт кружком и так.
+        if media_type == "video_note":
+            from app.services.video_note import process_to_square
+
+            result = await process_to_square(dst_path)
+            if result:
+                squared, width, height, duration = result
+                if str(squared) != str(dst_path):
+                    try:
+                        os.remove(dst_path)
+                    except OSError:
+                        pass
+                dst_path, mime = squared, "video/mp4"
+                file_size = os.path.getsize(dst_path)
 
         # Следующий свободный order_idx
         used = {m.order_idx for m in existing}
@@ -148,6 +178,7 @@ class StepMediaService:
             file_size=file_size,
             width=width,
             height=height,
+            duration=duration,
             order_idx=order_idx,
             caption=caption,
             checksum_sha256=checksum,

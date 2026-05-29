@@ -100,6 +100,7 @@ async def upload_step_media(
     step_id: int,
     file: UploadFile = File(...),
     caption: str | None = Form(default=None),
+    as_video_note: bool = Form(default=False),
     _: Admin = Depends(current_admin),
     session: AsyncSession = Depends(get_session),
 ) -> StepMediaOut:
@@ -116,6 +117,7 @@ async def upload_step_media(
             original_filename=file.filename,
             declared_mime=file.content_type,
             caption=caption,
+            as_video_note=as_video_note,
         )
     except InvalidMediaError as e:
         raise HTTPException(status_code=422, detail=str(e))

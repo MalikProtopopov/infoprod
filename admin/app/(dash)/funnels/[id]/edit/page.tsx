@@ -53,6 +53,8 @@ type Step = {
   kind: 'message' | 'quiz' | 'form';
   quiz_id: number | null;
   form_id: number | null;
+  audience_tags: string[] | null;
+  send_condition: string;
   media: StepMediaBrief[];
 };
 
@@ -668,6 +670,8 @@ function StepEditor({
         kind: local.kind,
         quiz_id: local.quiz_id,
         form_id: local.form_id,
+        audience_tags: local.audience_tags ?? [],
+        send_condition: local.send_condition || 'always',
       });
       // Фиксируем текущее состояние как «сохранённое» → индикатор «несохранено»
       // сбрасывается сразу, не дожидаясь и не завися от ответа refetch.
@@ -826,6 +830,7 @@ function StepEditor({
               value={local.buttons}
               onChange={(rows) => setLocal({ ...local, buttons: rows })}
               funnelId={funnel.id}
+              stepId={local.id}
             />
           </Field>
         </>
@@ -841,6 +846,29 @@ function StepEditor({
           </p>
         </div>
       )}
+
+      <div className="space-y-2 pt-3 border-t border-zinc-100">
+        <div className="text-xs uppercase tracking-wide text-zinc-500 font-medium">Сегментация (опционально)</div>
+        <Field label="Кому показывать (теги)" hint="Через запятую. Пусто — всем. Шаг придёт только тем, у кого есть хотя бы один тег (теги ставятся кнопками-отметками ✅).">
+          <Input
+            value={(local.audience_tags || []).join(', ')}
+            placeholder="напр. hot, warm"
+            onChange={(e) => setLocal({
+              ...local,
+              audience_tags: e.target.value.split(',').map((t) => t.trim()).filter(Boolean),
+            })}
+          />
+        </Field>
+        <Field label="Условие отправки">
+          <Select
+            value={local.send_condition || 'always'}
+            onChange={(e) => setLocal({ ...local, send_condition: e.target.value })}
+          >
+            <option value="always">Всегда</option>
+            <option value="if_no_click_since_prev">Только если не было клика после прошлого шага</option>
+          </Select>
+        </Field>
+      </div>
 
       <div className="flex justify-between items-center pt-2">
         <div className="text-xs text-zinc-500">

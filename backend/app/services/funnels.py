@@ -61,6 +61,8 @@ class FunnelsService:
                     kind=st.get("kind", "message"),
                     quiz_id=st.get("quiz_id"),
                     form_id=st.get("form_id"),
+                    audience_tags=st.get("audience_tags"),
+                    send_condition=st.get("send_condition", "always") or "always",
                 )
                 self.session.add(step)
             await self.session.flush()
@@ -83,6 +85,8 @@ class FunnelsService:
         kind: str = "message",
         quiz_id: int | None = None,
         form_id: int | None = None,
+        audience_tags: Any = None,
+        send_condition: str = "always",
     ) -> FunnelStep:
         step = FunnelStep(
             funnel_id=funnel_id, order_idx=order_idx,
@@ -90,6 +94,7 @@ class FunnelsService:
             parse_mode=parse_mode, lead_magnet_id=lead_magnet_id, buttons=buttons,
             is_active=is_active,
             kind=kind, quiz_id=quiz_id, form_id=form_id,
+            audience_tags=audience_tags, send_condition=send_condition or "always",
         )
         self.session.add(step)
         await self.session.flush()

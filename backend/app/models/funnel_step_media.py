@@ -34,8 +34,9 @@ from app.db.base import Base
 
 
 # Допустимые значения media_type — должны совпадать с
-# `app.share.limits.infer_media_type`.
-ALLOWED_MEDIA_TYPES = ("photo", "video", "animation", "audio", "document", "voice")
+# `app.share.limits.infer_media_type` (+ video_note, который задаётся явно
+# флагом загрузки, а не выводится из MIME).
+ALLOWED_MEDIA_TYPES = ("photo", "video", "animation", "audio", "document", "voice", "video_note")
 
 
 class FunnelStepMedia(Base):
@@ -54,7 +55,7 @@ class FunnelStepMedia(Base):
         ),
         Index("ix_funnel_step_media_checksum", "checksum_sha256"),
         CheckConstraint(
-            "media_type IN ('photo','video','animation','audio','document','voice')",
+            "media_type IN ('photo','video','animation','audio','document','voice','video_note')",
             name="ck_funnel_step_media_type",
         ),
         CheckConstraint(

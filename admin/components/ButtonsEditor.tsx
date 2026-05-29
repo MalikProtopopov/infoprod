@@ -29,10 +29,17 @@ import { fetcher } from '@/lib/api';
  * автоматически и здесь НЕ настраивается.
  */
 
-export type Btn = { text: string; url?: string; callback_data?: string };
+export type Btn = {
+  text: string;
+  url?: string;
+  callback_data?: string;
+  // Только для track-кнопок: тег сегмента и ответ после клика.
+  tag?: string;
+  reply_text?: string;
+};
 export type ButtonRows = Btn[][];
 
-type BtnKind = 'url' | 'lead' | 'product' | 'funnel' | 'quiz' | 'form' | 'menu';
+type BtnKind = 'url' | 'lead' | 'product' | 'funnel' | 'quiz' | 'form' | 'menu' | 'track';
 
 type ProductBrief = { id: number; name: string };
 type FunnelBrief = { id: number; name: string };
@@ -51,6 +58,7 @@ function detectKind(b: Btn): BtnKind {
   if (cd.startsWith('funnel:start:')) return 'funnel';
   if (cd.startsWith('quiz:start:')) return 'quiz';
   if (cd.startsWith('form:start:')) return 'form';
+  if (cd.startsWith('track:')) return 'track';
   if (cd === 'menu:main') return 'menu';
   return 'url';
 }
@@ -62,12 +70,25 @@ const KIND_OPTIONS: { value: BtnKind; label: string; hint: string }[] = [
   { value: 'funnel',  label: '🎯 Запустить воронку',      hint: 'Подписать юзера на серию сообщений' },
   { value: 'quiz',    label: '🧠 Запустить квиз',         hint: 'Открыть интерактивный опрос с подсчётом score' },
   { value: 'form',    label: '📋 Открыть форму',          hint: 'Серия вопросов с сохранением в Lead' },
+  { value: 'track',   label: '✅ Кнопка-отметка',          hint: 'Фиксирует клик (CTR), ставит тег сегмента и опц. отвечает текстом' },
   { value: 'menu',    label: '🏠 Главное меню',           hint: 'Каталог всех продуктов' },
 ];
 
-function defaultsForKind(kind: BtnKind, currentText: string): Btn {
+function genTrackKey(): string {
+  return Math.random().toString(36).slice(2, 8);
+}
+
+function defaultsForKind(kind: BtnKind, currentText: string, stepId?: number): Btn {
   // Сохраняем текст кнопки при смене типа; технические поля переустанавливаем
   switch (kind) {
+    case 'track':
+      return {
+        text: currentText || 'Понятно',
+        callback_data: stepId ? `track:${stepId}:${genTrackKey()}` : '',
+        url: undefined,
+        tag: '',
+        reply_text: '',
+      };
     case 'url':
       return { text: currentText || 'Открыть', url: '', callback_data: undefined };
     case 'lead':
@@ -90,11 +111,14 @@ export function ButtonsEditor({
   value,
   onChange,
   funnelId,
+  stepId,
 }: {
   value: ButtonRows | null;
   onChange: (next: ButtonRows | null) => void;
   /** id текущей воронки — для фильтрации quiz/form-шагов по контексту */
   funnelId?: number;
+  /** id текущего шага — нужен для track-кнопок (callback_data=track:{stepId}:{key}) */
+  stepId?: number;
 }) {
   const rows = value || [];
   const { data: products } = useSWR<ProductBrief[]>('/products', fetcher);
@@ -124,7 +148,7 @@ export function ButtonsEditor({
 
   function changeKind(rowIdx: number, btnIdx: number, kind: BtnKind) {
     const current = rows[rowIdx][btnIdx];
-    const next = defaultsForKind(kind, current.text);
+    const next = defaultsForKind(kind, current.text, stepId);
     const updated = rows.map((r, ri) =>
       ri === rowIdx ? r.map((b, bi) => (bi === btnIdx ? next : b)) : r,
     );
@@ -187,7 +211,7 @@ export function ButtonsEditor({
                     onChange={(e) => changeKind(ri, bi, e.target.value as BtnKind)}
                     className="!w-48 shrink-0"
                   >
-                    {KIND_OPTIONS.map((opt) => (
+                    {KIND_OPTIONS.filter((opt) => opt.value !== 'track' || stepId).map((opt) => (
                       <option key={opt.value} value={opt.value}>{opt.label}</option>
                     ))}
                   </Select>
@@ -269,6 +293,26 @@ function BtnActionFields({
   if (kind === 'menu') {
     // Без полей — callback_data='menu:main' зашит дефолтами
     return null;
+  }
+
+  if (kind === 'track') {
+    return (
+      <div className="space-y-1.5">
+        <Input
+          placeholder="Тег сегмента (опц.), напр. hot"
+          value={btn.tag || ''}
+          onChange={(e) => onChange({ tag: e.target.value })}
+        />
+        <Input
+          placeholder="Ответ после клика (опц.) — придёт сообщением"
+          value={btn.reply_text || ''}
+          onChange={(e) => onChange({ reply_text: e.target.value })}
+        />
+        <div className="text-[10px] text-zinc-400 leading-snug">
+          Тег используется для показа шагов «только своему сегменту» (поле «Кому показывать» в шаге).
+        </div>
+      </div>
+    );
   }
 
   if (kind === 'lead' || kind === 'product') {
