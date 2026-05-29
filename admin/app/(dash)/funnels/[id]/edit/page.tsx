@@ -912,12 +912,25 @@ function Section4Launch({
   onMutate: () => void;
 }) {
   const [testRunId, setTestRunId] = useState<number | null>(null);
+  const [testDismissed, setTestDismissed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [testOpen, setTestOpen] = useState(false);
   const [testQ, setTestQ] = useState('');
   const [manualTg, setManualTg] = useState('');
 
   const allReady = stepsOk && entryOk;
+
+  // Восстанавливаем панель последнего тест-прогона после перезагрузки страницы
+  // (testRunId — локальный стейт, иначе панель пропадает на refresh).
+  const { data: latestTest } = useSWR<{ test_entry_id: number | null }>(
+    `/funnels/${funnel.id}/test-run/latest`,
+    fetcher,
+  );
+  useEffect(() => {
+    if (testRunId == null && !testDismissed && latestTest?.test_entry_id) {
+      setTestRunId(latestTest.test_entry_id);
+    }
+  }, [latestTest, testRunId, testDismissed]);
 
   // Юзеры бота воронки — для выбора, на кого слать тест.
   const usersKey = testOpen
@@ -929,6 +942,7 @@ function Section4Launch({
     setBusy(true);
     try {
       const res = await api.post<{ test_entry_id: number }>(`/funnels/${funnel.id}/test-run`, body);
+      setTestDismissed(false);
       setTestRunId(res.test_entry_id);
       setTestOpen(false);
     } catch (e) {
@@ -999,7 +1013,7 @@ function Section4Launch({
             funnelId={funnel.id}
             testEntryId={testRunId}
             botUsername={botUsername}
-            onClose={() => setTestRunId(null)}
+            onClose={() => { setTestRunId(null); setTestDismissed(true); }}
           />
         )}
       </div>

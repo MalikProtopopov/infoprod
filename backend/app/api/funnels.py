@@ -455,14 +455,17 @@ async def test_run(
             await session.flush()
     else:
         # Без явной цели — виртуальный юзер от админа (симуляция расписания).
+        # Ищем по тому же отрицательному id, с которым создаём, иначе повторный
+        # тест не находит юзера и падает на UNIQUE telegram_user_id.
+        virtual_tg_id = -(admin.id)
         test_user = (
             await session.execute(
-                select(User).where(User.telegram_user_id == admin.id).limit(1)
+                select(User).where(User.telegram_user_id == virtual_tg_id).limit(1)
             )
         ).scalar_one_or_none()
         if test_user is None:
             test_user = User(
-                telegram_user_id=-(admin.id),
+                telegram_user_id=virtual_tg_id,
                 first_name=admin.username,
                 username=admin.username,
                 notifications_enabled=True,
@@ -526,6 +529,26 @@ async def test_run(
         "note": "Сообщения придут в Telegram если у админа настроен telegram_user_id; "
                 "иначе можно опрашивать /test-run/{test_entry_id}/status для прогресса.",
     }
+
+
+@router.get("/{funnel_id}/test-run/latest", response_model=dict)
+async def test_run_latest(
+    funnel_id: int,
+    _: Admin = Depends(current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Последний тест-прогон воронки — чтобы восстановить панель после refresh."""
+    entry = (
+        await session.execute(
+            select(FunnelEntry)
+            .where(FunnelEntry.funnel_id == funnel_id, FunnelEntry.is_test.is_(True))
+            .order_by(FunnelEntry.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if entry is None:
+        return {"test_entry_id": None}
+    return {"test_entry_id": entry.id, "status": entry.status}
 
 
 @router.get("/{funnel_id}/test-run/{test_entry_id}/status", response_model=dict)
