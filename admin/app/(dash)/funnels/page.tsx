@@ -163,7 +163,7 @@ function FunnelCard({ funnel, productName, onDelete }: {
   const missing: string[] = [];
   if (funnel.steps_count === 0) missing.push('шаги');
   if (ep && !ep.has_any) missing.push('точки входа');
-  if (!funnel.is_active && funnel.steps_count > 0 && hasAny) missing.push('активацию');
+  if (!funnel.is_active && funnel.steps_count > 0 && hasAny) missing.push('активация');
 
   const linksCount = ep?.tracking_links.length || 0;
   const triggersCount = ep?.triggers.length || 0;
