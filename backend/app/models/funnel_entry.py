@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,3 +31,6 @@ class FunnelEntry(Base):
     # Теги сегментации, проставленные track-кнопками (напр. ["hot"]). Шаги с
     # audience_tags показываются только если у entry есть нужный тег.
     tags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # Тестовый прогон (кнопка «Тест»): шаги идут даже на неактивной воронке;
+    # исключается из аналитики.
+    is_test: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")

@@ -37,7 +37,23 @@ export function ObservableTestPanel({
 }) {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [stopped, setStopped] = useState(false);
+  const [advancing, setAdvancing] = useState(false);
   const [now, setNow] = useState(Date.now());
+
+  async function advanceNow() {
+    setAdvancing(true);
+    try {
+      await api.post(`/funnels/${funnelId}/test-run/${testEntryId}/advance`, {});
+      const data = await api.get<StatusResponse>(
+        `/funnels/${funnelId}/test-run/${testEntryId}/status`,
+      );
+      setStatus(data);
+    } catch {
+      // ignore
+    } finally {
+      setAdvancing(false);
+    }
+  }
 
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 1000);
@@ -74,6 +90,7 @@ export function ObservableTestPanel({
 
   const sentCount = status.messages.filter((m) => m.sent_at).length;
   const total = status.messages.length;
+  const hasPending = status.messages.some((m) => !m.sent_at && !m.cancelled_at);
 
   return (
     <div className="glass-strong rounded-2xl p-4 sm:p-5 anim-rise">
@@ -141,9 +158,14 @@ export function ObservableTestPanel({
       </ul>
 
       <div className="mt-4 flex gap-2 flex-wrap">
+        {hasPending && (
+          <Button onClick={advanceNow} disabled={advancing}>
+            {advancing ? '…' : '⏩ Отправить следующий шаг сейчас'}
+          </Button>
+        )}
         {botUsername && (
           <a href={`https://t.me/${botUsername}`} target="_blank" rel="noreferrer">
-            <Button>📱 Открыть Telegram</Button>
+            <Button variant="glass">📱 Открыть Telegram</Button>
           </a>
         )}
         <Button variant="ghost" onClick={() => setStopped(true)} disabled={stopped}>

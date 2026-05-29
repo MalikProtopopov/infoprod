@@ -431,7 +431,8 @@ async def test_run(
     if f is None:
         raise HTTPException(status_code=404, detail="Funnel not found")
 
-    # Определяем целевого пользователя: по внутреннему id или по telegram_user_id.
+    # Определяем целевого пользователя: по внутреннему id, по telegram_user_id,
+    # либо (без цели) — виртуальный тест-юзер от админа (прогон-симуляция).
     test_user: User | None = None
     if payload.target_user_id is not None:
         test_user = await session.get(User, payload.target_user_id)
@@ -453,10 +454,21 @@ async def test_run(
             session.add(test_user)
             await session.flush()
     else:
-        raise HTTPException(
-            status_code=422,
-            detail="Выберите пользователя или укажите Telegram ID для теста.",
-        )
+        # Без явной цели — виртуальный юзер от админа (симуляция расписания).
+        test_user = (
+            await session.execute(
+                select(User).where(User.telegram_user_id == admin.id).limit(1)
+            )
+        ).scalar_one_or_none()
+        if test_user is None:
+            test_user = User(
+                telegram_user_id=-(admin.id),
+                first_name=admin.username,
+                username=admin.username,
+                notifications_enabled=True,
+            )
+            session.add(test_user)
+            await session.flush()
 
     steps = (
         await session.execute(
@@ -478,6 +490,7 @@ async def test_run(
         source_ref=admin.id,
         started_at=now,
         status="active",
+        is_test=True,
     )
     session.add(entry)
     await session.flush()
@@ -551,6 +564,47 @@ async def test_run_status(
             for m, s in msgs
         ],
     }
+
+
+@router.post("/{funnel_id}/test-run/{test_entry_id}/advance", response_model=dict)
+async def test_run_advance(
+    funnel_id: int,
+    test_entry_id: int,
+    _: Admin = Depends(current_admin),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Отправить СЛЕДУЮЩИЙ запланированный шаг тест-прогона прямо сейчас.
+
+    Не нужно ждать расписания ×60 — двигаем ближайший неотправленный шаг на
+    «сейчас» и сразу прогоняем воркер для этого entry."""
+    from datetime import datetime, timezone
+
+    from app.workers.scheduled_messages import process_due_messages
+
+    entry = await session.get(FunnelEntry, test_entry_id)
+    if entry is None or entry.funnel_id != funnel_id:
+        raise HTTPException(status_code=404, detail="Test entry not found")
+
+    nxt = (
+        await session.execute(
+            select(ScheduledMessage)
+            .where(
+                ScheduledMessage.funnel_entry_id == test_entry_id,
+                ScheduledMessage.sent_at.is_(None),
+                ScheduledMessage.cancelled_at.is_(None),
+            )
+            .order_by(ScheduledMessage.scheduled_at.asc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if nxt is None:
+        return {"advanced": False, "done": True, "stats": {"sent": 0}}
+
+    nxt.scheduled_at = datetime.now(tz=timezone.utc)
+    await session.commit()
+
+    stats = await process_due_messages(session, entry_id=test_entry_id)
+    return {"advanced": True, "done": False, "stats": stats}
 
 
 # ===== entries endpoints (отдельный router без funnel_id) =====
