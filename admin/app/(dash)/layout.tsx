@@ -30,6 +30,11 @@ const I = {
       <path d="M4 4h16v14H7l-3 3z" /><path d="M8 9h8M8 13h5" />
     </svg>
   ),
+  Bell: () => (
+    <svg className={baseIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.7 21a2 2 0 0 1-3.4 0" />
+    </svg>
+  ),
   Users: () => (
     <svg className={baseIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
       <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
@@ -474,16 +479,21 @@ export default function DashLayout({ children }: { children: ReactNode }) {
             <Breadcrumbs items={breadcrumbs} />
 
             <div className="ml-auto flex items-center gap-2">
-              {counts.newLeads > 0 && (
-                <Link
-                  href="/leads"
-                  className="hidden sm:inline-flex items-center gap-2 text-xs px-3 h-8 rounded-lg bg-amber-50/80 hover:bg-amber-100/80 transition text-amber-800 border border-amber-200/60"
-                  title={`${counts.newLeads} новых заявок`}
-                >
-                  <I.Leads />
-                  <span className="font-medium">{counts.newLeads} новых заявок</span>
-                </Link>
-              )}
+              <Link
+                href="/leads"
+                aria-label={counts.newLeads > 0 ? `${counts.newLeads} новых заявок` : 'Заявки'}
+                title={counts.newLeads > 0 ? `${counts.newLeads} новых заявок` : 'Заявки'}
+                className="relative inline-flex items-center justify-center size-9 rounded-xl text-zinc-600 hover:text-indigo-700 hover:bg-white/70 transition"
+              >
+                <span className="size-5 inline-flex">
+                  <I.Bell />
+                </span>
+                {counts.newLeads > 0 && (
+                  <span className="absolute -top-0.5 -right-0.5 inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-indigo-600 text-white text-[10px] font-semibold leading-none tabular-nums ring-2 ring-white/80 shadow-sm">
+                    {counts.newLeads > 99 ? '99+' : counts.newLeads}
+                  </span>
+                )}
+              </Link>
             </div>
           </div>
         </header>
